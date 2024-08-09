@@ -48,6 +48,16 @@ The rule :mod:`add_extra_components` attaches additional extendable components t
 
 import logging
 from typing import List
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+import pypsa
+from _helpers import configure_logging
+
+import pypsa
+import pandas as pd
+import numpy as np
+from typing import List
 
 import geopandas as gpd
 import numpy as np

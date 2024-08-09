@@ -235,8 +235,8 @@ rule retrieve_cost_data_usa:
         # nrel_atb_transport = DATA + "costs/nrel_atb_transport.xlsx",
         nrel_atb=DATA + "costs/nrel_atb.parquet",
     params:
-        # eia_api_key = config["api"].get("eia", None),
-        eia_api_key=None,
+        eia_api_key = config["api"].get("eia", None),
+        #eia_api_key="NrkfRpT6pQFCVgYclaRCHuMOI7XmlcGXHGKIa7HP",
     log:
         LOGS + "retrieve_cost_data_usa.log",
     resources:
