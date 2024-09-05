@@ -11,7 +11,11 @@ from functools import reduce
 import numpy as np
 import pandas as pd
 import pypsa
-from _helpers import configure_logging, export_network_for_gis_mapping
+from _helpers import (
+    configure_logging,
+    export_network_for_gis_mapping,
+    reduce_float_memory,
+)
 from pypsa.clustering.spatial import get_clustering_from_busmap
 
 logger = logging.getLogger(__name__)
@@ -138,6 +142,7 @@ def aggregate_to_substations(
             "interconnect",
             "state",
             "country",
+            "county",
             "balancing_area",
             "reeds_zone",
             "reeds_ba",
@@ -157,6 +162,8 @@ def aggregate_to_substations(
         zone = substations.state
     elif aggregation_zones == "reeds_zone":
         zone = substations.reeds_zone
+    elif aggregation_zones == "county":
+        zone = substations.county
     else:
         ValueError("zonal_aggregation must be either balancing_area, country or state")
 
@@ -182,6 +189,7 @@ def aggregate_to_substations(
             "nerc_reg",
             "trans_reg",
             "reeds_state",
+            "county"
         ]
     else:
         cols2drop = ["balancing_area", "substation_off", "sub_id", "state"]
@@ -221,7 +229,7 @@ if __name__ == "__main__":
     if "snakemake" not in globals():
         from _helpers import mock_snakemake
 
-        snakemake = mock_snakemake("simplify_network", interconnect="eastern")
+        snakemake = mock_snakemake("simplify_network", interconnect="western")
     configure_logging(snakemake)
     params = snakemake.params
 
@@ -262,7 +270,12 @@ if __name__ == "__main__":
         params.aggregation_strategies,
     )
 
+    n.loads_t.p_set = reduce_float_memory(n.loads_t.p_set)
+    n.generators_t.p_max_pu = reduce_float_memory(n.generators_t.p_max_pu)
+    n.generators_t.p_min_pu = reduce_float_memory(n.generators_t.p_min_pu)
+    n.generators_t.marginal_cost = reduce_float_memory(n.generators_t.marginal_cost)
+
     n.export_to_netcdf(snakemake.output[0])
 
-    output_path = os.path.dirname(snakemake.output[0]) + "_simplified_"
+    output_path = os.path.dirname(snakemake.output[0]) + "/simplified_"
     export_network_for_gis_mapping(n, output_path)

@@ -20,6 +20,32 @@ def sector_input_files(wildcards):
     return input_files
 
 
+# rule add_geothermal:
+#     input:
+#         network= RESOURCES + "{interconnect}/elec_s_{clusters}_ec.nc",
+#         tech_costs=lambda wildcards: expand(
+#             RESOURCES + "costs/costs_{year}.csv",
+#             year=config["scenario"]["planning_horizons"],
+#         ),
+#         regions_onshore=RESOURCES
+#         + "{interconnect}/regions_onshore_s_{clusters}.geojson",
+#         geo_egs_sc=DATA + config["electricity"]["geothermal"]["egs_sc_file"],
+#     params:
+#         cost_reduction=config["electricity"]["geothermal"]["egs_reduction"],
+#     output:
+#         network=RESOURCES + "{interconnect}/elec_s_{clusters}_ec_geo.nc",
+#         geo_test = RESOURCES + "{interconnect}/geo_test.csv",
+#     log:
+#         "logs/add_geothermal/{interconnect}/elec_s_{clusters}_ec.log",
+#     threads: 1
+#     resources:
+#         mem_mb=interconnect_mem_prepare,
+#     group:
+#         "prepare"
+#     script:
+#         "../scripts/build_egs_potential.py"
+
+
 rule add_sectors:
     params:
         electricity=config["electricity"],
@@ -30,7 +56,12 @@ rule add_sectors:
         api=config["api"],
     input:
         unpack(sector_input_files),
-        counties = DATA + "counties/cb_2020_us_county_500k.shp"
+        # counties = DATA + "counties/cb_2020_us_county_500k.shp",
+        # pop_layout_total=RESOURCES + "{interconnect}/pop_layout_total.nc",
+        # pop_layout_urban=RESOURCES + "{interconnect}/pop_layout_urban.nc",
+        # pop_layout_rural=RESOURCES + "{interconnect}/pop_layout_rural.nc",
+        # temp_soil=RESOURCES + "{interconnect}/temp_soil_{scope}_elec_s_{clusters}.nc",
+        # temp_air=RESOURCES + "{interconnect}/temp_air_{scope}_elec_s_{clusters}.nc",
     output:
         network=RESOURCES
         + "{interconnect}/elec_s_{clusters}_ec_l{ll}_{opts}_{sector}.nc",
