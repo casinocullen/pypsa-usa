@@ -2001,6 +2001,7 @@ if __name__ == "__main__":
     # strategy as extra arguments are required to fill in data
 
     demand_scale_file = snakemake.input.demand_scaling_file
+    demand_scale_factor = demand_params.get("scale", 1)
 
     demand_formatter = DemandFormatter(
         n=n,
@@ -2014,6 +2015,8 @@ if __name__ == "__main__":
         formatted_demand[fuel] = demand_formatter.format_demand(demand, end_use)
 
     # electricity sector study
+    formatted_demand["electricity"] = formatted_demand["electricity"] * demand_scale_factor
+    
     if end_use == "power":
         formatted_demand["electricity"].round(4).to_csv(
             snakemake.output.elec_demand,

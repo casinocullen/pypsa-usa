@@ -71,6 +71,7 @@ rule build_bus_regions:
         state_shapes=RESOURCES + "{interconnect}/state_boundaries.geojson",
         ba_region_shapes=RESOURCES + "{interconnect}/onshore_shapes.geojson",
         reeds_shapes=RESOURCES + "{interconnect}/reeds_shapes.geojson",
+        county_shapes=RESOURCES + "{interconnect}/county_shapes.geojson",
         offshore_shapes=RESOURCES + "{interconnect}/offshore_shapes.geojson",
         base_network=RESOURCES + "{interconnect}/elec_base_network.nc",
         bus2sub=RESOURCES + "{interconnect}/bus2sub.csv",
@@ -459,26 +460,12 @@ rule add_electricity:
         regions=RESOURCES + "{interconnect}/regions_onshore.geojson",
         powerplants=RESOURCES + "powerplants.csv",
         plants_eia="repo_data/plants/plants_merged.csv",
-        plants_tx=f"repo_data/ercot_specific/{config['capacity_from_reeds']}.csv",
-        plants_ads="repo_data/plants/ads_plants_locs.csv",
         plants_breakthrough=DATA + "breakthrough_network/base_grid/plant.csv",
         hydro_breakthrough=DATA + "breakthrough_network/base_grid/hydro.csv",
-        wind_breakthrough=DATA + "breakthrough_network/base_grid/wind.csv",
-        solar_breakthrough=DATA + "breakthrough_network/base_grid/solar.csv",
+        bus2sub=RESOURCES + "{interconnect}/bus2sub.csv",
+        pudl_fuel_costs=RESOURCES + "{interconnect}/pudl_fuel_costs.csv",
+        # plants_tx=f"repo_data/ercot_specific/{config['capacity_from_reeds']}.csv",
         ercot_outage = "repo_data/ercot_specific/outage_share_2020_2024.csv",
-        bus2sub=DATA + "breakthrough_network/base_grid/{interconnect}/bus2sub.csv",
-        ads_renewables=(
-            DATA + "WECC_ADS/processed/"
-            if config["network_configuration"] == "ads2032"
-            else []
-        ),
-        ads_2032=(
-            DATA + "WECC_ADS/downloads/2032/Public Data/Hourly Profiles in CSV format"
-            if config["network_configuration"] == "ads2032"
-            else []
-        ),
-        demand=RESOURCES + "{interconnect}/demand.csv",
-        fuel_costs="repo_data/plants/fuelCost22.csv",
     output:
         RESOURCES + "{interconnect}/elec_base_network_l_pp.nc",
     log:
@@ -555,10 +542,9 @@ rule cluster_network:
     script:
         "../scripts/cluster_network.py"
 
-if config["enable"].get("allow_new_plant", True):
-    rule add_extra_components:
-        input:
-            **{
+rule add_extra_components:
+    input:
+        **{
             f"phs_shp_{hour}": DATA
             + f"psh/40-100-dam-height-{hour}hr-no-croplands-no-ephemeral-no-highways.gpkg"
             for phs_tech in config["electricity"]["extendable_carriers"]["StorageUnit"]
@@ -567,35 +553,58 @@ if config["enable"].get("allow_new_plant", True):
             if hour.isdigit()
         },
         network=RESOURCES + "{interconnect}/elec_s_{clusters}.nc",
-            tech_costs=lambda wildcards: expand(
+        tech_costs=lambda wildcards: expand(
             RESOURCES + "costs/costs_{year}.csv",
-                year=config["scenario"]["planning_horizons"],
+            year=config["scenario"]["planning_horizons"],
         ),
+        temp_air_total = RESOURCES + "{interconnect}/temp_air_total_elec_s_{clusters}.nc",
         regions_onshore=RESOURCES
         + "{interconnect}/regions_onshore_s_{clusters}.geojson",
+        geo_egs_sc=DATA + config["electricity"]["geothermal"]["egs_sc_file"],
     params:
-            retirement=config["electricity"].get("retirement", "technical"),
-        output:
-            RESOURCES + "{interconnect}/elec_s_{clusters}_ec.nc",
-        log:
-            "logs/add_extra_components/{interconnect}/elec_s_{clusters}_ec.log",
-        threads: 1
-        resources:
-            mem_mb=interconnect_mem_prepare,
-        group:
-            "prepare"
-        script:
-            "../scripts/add_extra_components.py"
-else: 
-    rule no_add_extra_components:
-        input:
-            network=RESOURCES + "{interconnect}/elec_s_{clusters}.nc",
-        output:
-            RESOURCES + "{interconnect}/elec_s_{clusters}_ec.nc",
-        resources:
-            mem=500,
-        run:
-            move(input[0], output[0])
+        planning_horizons=config["scenario"]["planning_horizons"],
+        snapshots=config["snapshots"],
+        retirement=config["electricity"].get("retirement", "technical"),
+        cost_reduction=config["electricity"]["geothermal"]["egs_reduction"],
+    output:
+        RESOURCES + "{interconnect}/elec_s_{clusters}_ec.nc",
+    log:
+        "logs/add_extra_components/{interconnect}/elec_s_{clusters}_ec.log",
+    threads: 1
+    resources:
+        mem_mb=interconnect_mem_prepare,
+    group:
+        "prepare"
+    script:
+        "../scripts/add_extra_components.py"
+
+# if config["electricity"]['geothermal']['egs']:
+#     rule add_geothermal:
+#         input:
+#             network= RESOURCES + "{interconnect}/elec_s_{clusters}_ec.nc",
+#             tech_costs=lambda wildcards: expand(
+#                 RESOURCES + "costs/costs_{year}.csv",
+#                 year=config["scenario"]["planning_horizons"],
+#             ),
+#             regions_onshore=RESOURCES
+#             + "{interconnect}/regions_onshore_s_{clusters}.geojson",
+#             geo_egs_sc=DATA + config["electricity"]["geothermal"]["egs_sc_file"],
+#         params:
+#             cost_reduction=config["electricity"]["geothermal"]["egs_reduction"],
+#         output:
+#             network=RESOURCES + "{interconnect}/elec_s_{clusters}_ec_geo.nc",
+#             geo_test = RESOURCES + "{interconnect}/geo_test.csv",
+#         log:
+#             "logs/add_geothermal/{interconnect}/elec_s_{clusters}_ec.log",
+#         threads: 1
+#         resources:
+#             mem_mb=interconnect_mem_prepare,
+#         group:
+#             "prepare"
+#         script:
+#             "../scripts/build_egs_potential.py"
+
+
 
 
 rule prepare_network:

@@ -71,6 +71,8 @@ rule retrieve_nrel_efs_data:
         "logs/retrieve/retrieve_efs_{efs_case}_{efs_speed}.log",
     conda:
         "../envs/environment.yaml"
+    resources:
+        mem_mb=40000
     script:
         "../scripts/retrieve_databundles.py"
 

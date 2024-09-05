@@ -142,6 +142,7 @@ def aggregate_to_substations(
             "interconnect",
             "state",
             "country",
+            "county",
             "balancing_area",
             "reeds_zone",
             "reeds_ba",
@@ -161,6 +162,8 @@ def aggregate_to_substations(
         zone = substations.state
     elif aggregation_zones == "reeds_zone":
         zone = substations.reeds_zone
+    elif aggregation_zones == "county":
+        zone = substations.county
     else:
         ValueError("zonal_aggregation must be either balancing_area, country or state")
 
@@ -186,6 +189,7 @@ def aggregate_to_substations(
             "nerc_reg",
             "trans_reg",
             "reeds_state",
+            "county"
         ]
     else:
         cols2drop = ["balancing_area", "substation_off", "sub_id", "state"]

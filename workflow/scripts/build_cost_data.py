@@ -416,4 +416,14 @@ if __name__ == "__main__":
     costs = costs.reset_index(drop=True)
     costs["value"] = costs["value"].round(3)
 
+    # Add geothermal storage
+    if any("geothermal" in s for s in snakemake.config["electricity"]["extendable_carriers"]["StorageUnit"]): 
+        carriers = snakemake.config["electricity"]["extendable_carriers"]["StorageUnit"]
+        geo_carriers = [k for k in carriers if 'geothermal' in k]
+
+        costs.value[(costs['technology'].isin(geo_carriers)) & (costs['parameter'] == 'investment')] = 3000
+        # costs.value[(costs['technology'].isin(geo_carriers)) & (costs['parameter'] == 'FOM')] = XX
+        costs.value[(costs['technology'].isin(geo_carriers)) & (costs['parameter'] == 'lifetime')] = 30
+        costs.value[(costs['technology'].isin(geo_carriers)) & (costs['parameter'] == 'VOM')] = 0.540
+
     costs.to_csv(snakemake.output.tech_costs, index=False)

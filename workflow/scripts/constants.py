@@ -81,6 +81,8 @@ ADS_TECH_MAPPER = {
     "Natural Gas_Combined Cycle": "CCGT",
     "Uranium_Nuclear": "nuclear",
     "Electricity_Non-Tracking": "battery storage",
+    "Geo_Binary": "egs",
+
 }
 
 # maps ADS sub-type tech name to PyPSA name
@@ -126,6 +128,8 @@ ADS_SUB_TYPE_TECH_MAPPER = {
     "hydro": "hydro",
     "DC-Intertie": "other",
     "VAR-Device": "other",
+    "Geo-BinaryCycle": "egs",
+
 }
 
 # maps ADS carrier names to PyPSA name
@@ -154,6 +158,8 @@ ADS_CARRIER_NAME = {
     "WDS": "biomass",
     "Biomass Waste": "waste",
     "LFG": "waste",
+    "Geo": "egs",
+
 }
 
 # maps ADS fuel name to PyPSA name
@@ -741,6 +747,18 @@ ATB_TECH_MAPPER = {
     "12hr_PHS": {
         "display_name": "Pumped Storage Hydropower - National Class 1",
         "crp": 100,
+    },
+    "egs": {
+        "display_name": "Geothermal - Deep EGS / Binary",
+        "crp": 30,
+    },
+    "18hr_geothermal": {
+        "display_name": "Pumped Storage Hydropower - National Class 1",
+        "crp": 20,
+    },
+    "18hr_geothermal_ht": {
+        "display_name": "Pumped Storage Hydropower - National Class 1",
+        "crp": 20,
     },
 }
 

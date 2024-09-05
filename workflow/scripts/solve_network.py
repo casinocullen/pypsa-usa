@@ -156,9 +156,9 @@ def prepare_network(
         buses_i = n.buses.query("carrier == 'AC'").index
         if not np.isscalar(load_shedding):
             # TODO: do not scale via sign attribute (use Eur/MWh instead of Eur/kWh)
-            load_shedding = 1e8  # Eur/kWh
+            load_shedding = 1e3  # Eur/kWh
         else:
-            load_shedding = 1e8  # Eur/kWh
+            load_shedding = 1e3  # Eur/kWh
 
         n.madd(
             "Generator",
@@ -284,7 +284,7 @@ def add_RPS_constraints(n, config):
         "solar",
         "hydro",
         "geothermal",
-        "EGS",
+        "egs",
     ]
     ces_carriers = [
         "onwind",
@@ -293,7 +293,7 @@ def add_RPS_constraints(n, config):
         "solar",
         "hydro",
         "geothermal",
-        "EGS",
+        "egs",
         "biomass",
         "nuclear",
     ]

@@ -16,21 +16,37 @@ a heat potential (in GWh) and a cost (in EUR/MW).
 This scripts overlays that map with the network's regions, and builds a csv with CAPEX, OPEX and p_nom_max
 """
 
-
 import logging
 from typing import List
-
+import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pypsa
+from _helpers import configure_logging
+
+import pypsa
+import pandas as pd
+import numpy as np
+from typing import List
+import xarray as xr
 import geopandas as gpd
+import numpy as np
+import pandas as pd
 import pypsa
 from _helpers import configure_logging
 from add_electricity import (
+    add_missing_carriers,
+    add_co2_emissions,
+    add_missing_carriers,
     calculate_annuity,
-    _add_missing_carriers_from_costs,
-    add_nice_carrier_names,
     load_costs,
 )
+from add_extra_electricity import (
+    add_nice_carrier_names,
+    apply_itc,
+    apply_ptc,
+)
+
 
 import xarray as xr
 from shapely.geometry import Polygon
@@ -38,7 +54,6 @@ from shapely.geometry import Polygon
 idx = pd.IndexSlice
 
 logger = logging.getLogger(__name__)
-
 
 
 ########################################################################
@@ -96,32 +111,85 @@ def add_egs(n: pypsa.Network, regions_gpd, geo_sc, cost_reduction):
     egs_class['p_nom_opt'] = np.nan
   
     n.madd(
-    "Generator",
-    egs_class.index,
-    suffix=" new",
-    carrier= egs_class.carrier, 
-    bus=egs_class.bus,
-    p_nom_min=0,
-    p_nom=0,
-    p_nom_max=egs_class.p_nom_max,
-    p_nom_extendable=True,
-    ramp_limit_up=0.15,
-    ramp_limit_down=0.15,
-    efficiency=egs_class.efficiency,
-    marginal_cost=0,
-    capital_cost=egs_class.capital_cost,
-    lifetime=30,
-    p_min_pu = egs_class.p_min_pu,
-    p_max_pu = egs_class.p_max_pu,
+        "Generator",
+        egs_class.index,
+        suffix=" new",
+        carrier= egs_class.carrier, 
+        bus=egs_class.bus,
+        p_nom_min=0,
+        p_nom=0,
+        p_nom_max=egs_class.p_nom_max,
+        p_nom_extendable=True,
+        ramp_limit_up=0.15,
+        ramp_limit_down=0.15,
+        efficiency=egs_class.efficiency,
+        carrier_base = 'egs',
+        marginal_cost=0,
+        capital_cost=egs_class.capital_cost,
+        build_year = 2030,
+        lifetime=30,
+        p_min_pu = egs_class.p_min_pu,
+        p_max_pu = egs_class.p_max_pu,
     )
 
 
+def get_capacity_factors(network_regions_file, air_temperatures_file):
+    """
+    Performance of EGS is higher for lower temperatures, due to more efficient
+    air cooling Data from Ricks et al.: The Role of Flexible Geothermal Power
+    in Decarbonized Elec Systems.
+    """
+
+    # these values are taken from the paper's
+    # Supplementary Figure 20 from https://zenodo.org/records/7093330
+    # and relate deviations of the ambient temperature from the year-average
+    # ambient temperature to EGS capacity factors.
+    delta_T = [-15, -10, -5, 0, 5, 10, 15, 20]
+    cf = [1.17, 1.13, 1.07, 1, 0.925, 0.84, 0.75, 0.65]
+
+    x = np.linspace(-15, 20, 200)
+    y = np.interp(x, delta_T, cf)
+
+    upper_x = np.linspace(20, 25, 50)
+    m_upper = (y[-1] - y[-2]) / (x[-1] - x[-2])
+    upper_y = upper_x * m_upper - x[-1] * m_upper + y[-1]
+
+    lower_x = np.linspace(-20, -15, 50)
+    m_lower = (y[1] - y[0]) / (x[1] - x[0])
+    lower_y = lower_x * m_lower - x[0] * m_lower + y[0]
+
+    x = np.hstack((lower_x, x, upper_x))
+    y = np.hstack((lower_y, y, upper_y))
+
+    network_regions = gpd.read_file(network_regions_file).set_crs(epsg=4326)
+    index = network_regions["name"]
+
+    air_temp = xr.open_dataset(air_temperatures_file)
+
+    snapshots = pd.date_range(freq="h", **snakemake.params.snapshots)
+    capacity_factors = pd.DataFrame(index=snapshots)
+
+    # bespoke computation of capacity factors for each bus.
+    # Considering the respective temperatures, we compute
+    # the deviation from the average temperature and relate it
+    # to capacity factors based on the data from above.
+    for bus in index:
+        temp = air_temp.sel(name=bus).to_dataframe()["temperature"]
+        capacity_factors[bus] = np.interp((temp - temp.mean()).values, x, y)
+
+    return capacity_factors
+
+
+
+########################################################################
+################### NEW SECTION TO ADD GEOTHERMAL Storage ##############
+########################################################################
 
 def attach_geo_storageunits(n, costs, elec_opts, regions_gpd, geo_egs_sc):
 
     carriers = elec_opts["extendable_carriers"]["StorageUnit"]
     carriers = [k for k in carriers if 'geothermal' in k]
-    _add_missing_carriers_from_costs(n, costs, carriers)
+    add_missing_carriers(n, carriers)
 
     buses_i = n.buses.index
 
@@ -178,52 +246,6 @@ def attach_geo_storageunits(n, costs, elec_opts, regions_gpd, geo_egs_sc):
             )
 
 
-def get_capacity_factors(network_regions_file, air_temperatures_file):
-    """
-    Performance of EGS is higher for lower temperatures, due to more efficient
-    air cooling Data from Ricks et al.: The Role of Flexible Geothermal Power
-    in Decarbonized Elec Systems.
-    """
-
-    # these values are taken from the paper's
-    # Supplementary Figure 20 from https://zenodo.org/records/7093330
-    # and relate deviations of the ambient temperature from the year-average
-    # ambient temperature to EGS capacity factors.
-    delta_T = [-15, -10, -5, 0, 5, 10, 15, 20]
-    cf = [1.17, 1.13, 1.07, 1, 0.925, 0.84, 0.75, 0.65]
-
-    x = np.linspace(-15, 20, 200)
-    y = np.interp(x, delta_T, cf)
-
-    upper_x = np.linspace(20, 25, 50)
-    m_upper = (y[-1] - y[-2]) / (x[-1] - x[-2])
-    upper_y = upper_x * m_upper - x[-1] * m_upper + y[-1]
-
-    lower_x = np.linspace(-20, -15, 50)
-    m_lower = (y[1] - y[0]) / (x[1] - x[0])
-    lower_y = lower_x * m_lower - x[0] * m_lower + y[0]
-
-    x = np.hstack((lower_x, x, upper_x))
-    y = np.hstack((lower_y, y, upper_y))
-
-    network_regions = gpd.read_file(network_regions_file).set_crs(epsg=4326)
-    index = network_regions["name"]
-
-    air_temp = xr.open_dataset(air_temperatures_file)
-
-    snapshots = pd.date_range(freq="h", **snakemake.params.snapshots)
-    capacity_factors = pd.DataFrame(index=snapshots)
-
-    # bespoke computation of capacity factors for each bus.
-    # Considering the respective temperatures, we compute
-    # the deviation from the average temperature and relate it
-    # to capacity factors based on the data from above.
-    for bus in index:
-        temp = air_temp.sel(name=bus).to_dataframe()["temperature"]
-        capacity_factors[bus] = np.interp((temp - temp.mean()).values, x, y)
-
-    return capacity_factors
-
 if __name__ == "__main__":
     if "snakemake" not in globals():
         from _helpers import mock_snakemake
@@ -238,33 +260,51 @@ if __name__ == "__main__":
     n = pypsa.Network(snakemake.input.network)
     elec_config = snakemake.config["electricity"]
 
+    print(1)
+
     network_regions = (
         gpd.read_file(snakemake.input.regions_onshore)
         .set_index("name", drop=True)
         .set_crs(epsg=4326)
     )
 
+    Nyears = n.snapshot_weightings.loc[n.investment_periods[0]].objective.sum() / 8760.0
+    costs_dict = {
+        n.investment_periods[i]: load_costs(
+            snakemake.input.tech_costs[i],
+            snakemake.config["costs"],
+            elec_config["max_hours"],
+            Nyears,
+        )
+        for i in range(len(n.investment_periods))
+    }
 
-    Nyears = n.snapshot_weightings.objective.sum() / 8760.0
-    costs = load_costs(
-        snakemake.input.tech_costs,
-        snakemake.config["costs"],
-        elec_config["max_hours"],
-        Nyears,
-    )
+    print(2)
 
-    n.buses["location"] = n.buses.index
+    for investment_year in n.investment_periods:
+        costs = costs_dict[investment_year]
+        regions_gpd = snakemake.input.regions_onshore
+        geo_egs_sc = snakemake.input.geo_egs_sc
+        cost_reduction = snakemake.params.cost_reduction
+        add_egs(n, regions_gpd, geo_egs_sc, cost_reduction)
+        p_max_pu_t = pd.DataFrame(1.0, index=n.snapshots.get_level_values(1), columns=n.generators.query("Generator.str.contains('egs')").index)
+        n.generators_t["p_max_pu"] = n.generators_t["p_max_pu"].join(p_max_pu_t)
+        marginal_cost_t = pd.DataFrame(0.01, index=n.snapshots.get_level_values(1), columns=n.generators.query("Generator.str.contains('egs')").index)
+        n.generators_t["marginal_cost"] = n.generators_t["marginal_cost"].join(
+            marginal_cost_t
+        )
 
 
+        if any("geothermal" in s for s in elec_config['extendable_carriers']['StorageUnit']): 
+            attach_geo_storageunits(n, costs, elec_config, regions_gpd, geo_egs_sc)
+
+    print(3)
+
+    apply_itc(n, snakemake.config["costs"]["itc_modifier"])
+    apply_ptc(n, snakemake.config["costs"]["ptc_modifier"])
     add_nice_carrier_names(n, snakemake.config)
-
-    regions_gpd = snakemake.input.regions_onshore
-    geo_egs_sc = snakemake.input.geo_egs_sc
-    cost_reduction = snakemake.params.cost_reduction
-    add_egs(n, regions_gpd, geo_egs_sc, cost_reduction)
-    if any("geothermal" in s for s in elec_config['extendable_carriers']['StorageUnit']): 
-        attach_geo_storageunits(n, costs, elec_config, regions_gpd, geo_egs_sc)
-
 
     n.meta = dict(snakemake.config, **dict(wildcards=dict(snakemake.wildcards)))
     n.export_to_netcdf(snakemake.output[0])
+
+    pd.DataFrame().to_csv(snakemake.output[1])

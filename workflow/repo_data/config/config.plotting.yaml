@@ -90,6 +90,8 @@ plotting:
     "8hr_PHS_charger": "#069686"
     "10hr_PHS_charger": "#058a79"
     "12hr_PHS_charger": "#047d6c"  
+    "18hr_geothermal": "#047d6c"  
+    "18hr_geothermal_ht": "#047d6c"  
 
   nice_names:
     OCGT: "Open-Cycle Gas"
@@ -114,3 +116,5 @@ plotting:
     ind-elec: "Industrial Electrical"
     ind-heat: "Industrial Heating"
     trn-elec: "Transportation Electrical"
+    18hr_geothermal: "Geothermal Storage"  
+    18hr_geothermal_ht: "#Geothermal Storage w/ High Temp"  

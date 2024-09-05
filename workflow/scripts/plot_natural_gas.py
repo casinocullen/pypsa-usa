@@ -24,7 +24,7 @@ def figures_to_html(figs, filename):
 
     https://stackoverflow.com/a/58336718
     """
-    with open(filename, "w") as html:
+    with open(filename, "w", encoding="utf-8") as html:
         html.write("<html><head></head><body>" + "\n")
         for fig in figs:
             inner_html = fig.to_html().split("<body>")[1].split("</body>")[0]

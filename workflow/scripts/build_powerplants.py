@@ -711,6 +711,12 @@ def set_parameters(plants: pd.DataFrame):
         plants.pop("ads_startup_cost_fixed$")
         + plants.ads_startfuelmmbtu * plants.fuel_cost
     )
+
+    # Add start up cost for nuclear
+    plants.loc[plants['carrier'] == 'nuclear', 'start_up_cost'] = 20000
+    plants.loc[plants['carrier'] == 'nuclear', 'shut_down_cost'] = 20000
+
+
     plants["min_down_time"] = plants.pop("ads_minimumdowntimehr")
     plants["min_up_time"] = plants.pop("ads_minimumuptimehr")
 
