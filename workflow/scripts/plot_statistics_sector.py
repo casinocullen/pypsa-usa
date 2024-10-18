@@ -268,8 +268,9 @@ def plot_sector_production_timeseries(
         try:
 
             if nrows > 1:
+                df.plot(kind="area", ax=axs[i])
+                # df.plot(kind="area", ax=axs[i], color=colors)
 
-                df.plot(kind="area", ax=axs[i], color=colors)
                 axs[i].set_xlabel("")
                 axs[i].set_ylabel(y_label)
                 axs[i].set_title(f"{SECTOR_MAPPER[sector]} Production")

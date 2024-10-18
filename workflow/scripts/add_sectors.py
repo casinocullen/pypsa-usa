@@ -283,6 +283,7 @@ def build_electricity_infra(n: pypsa.Network):
     """
 
     df = n.loads[n.loads.index.str.endswith("-elec")].copy()
+    # df = n.loads.copy()
 
     df["bus0"] = df.apply(lambda row: row.bus.split(f" {row.carrier}")[0], axis=1)
     df["bus1"] = df.bus
@@ -483,5 +484,9 @@ if __name__ == "__main__":
             ratios.index = ratios.index.map(STATE_2_CODE)
             ratios = ratios.dropna()  # na is USA
             add_service_brownfield(n, "com", fuel, growth_multiplier, ratios, costs)
+
+
+    # n.mremove("Bus", n.buses.loc[n.buses['carrier'] == 'AC'].index)
+    # n.mremove("Bus", n.buses.loc[n.buses['country']==''].index)
 
     n.export_to_netcdf(snakemake.output.network)

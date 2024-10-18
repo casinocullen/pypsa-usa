@@ -6,6 +6,13 @@ import subprocess
 import zipfile
 from pathlib import Path
 
+# Windows have trouble unzip large file
+# Error message: Unsupported ZIP compression method (9: deflation-64-bit)
+# Use alternative method for windows
+# REQUIRE: pip install zipfile-deflate64
+import zipfile_deflate64 as zipfile
+
+
 import requests
 from _helpers import configure_logging, progress_retrieve
 
@@ -34,10 +41,12 @@ def download_repository(url, rootpath, repository):
         repository == "EFS"
     ):  # deflate64 compression not supported by zipFile, current subprocess command will only work on linux and mac
         if platform.system() == "Windows":
-            cmd = ["tar", "-xf", tarball_fn, "-C", to_fn]
+            with zipfile.ZipFile(tarball_fn, 'r') as zip_ref:
+                zip_ref.extractall(to_fn)
+            # cmd = ["tar", "-xf", tarball_fn.__str__(), "-C", to_fn.__str__()]
         else:
             cmd = ["unzip", tarball_fn, "-d", to_fn]
-        subprocess.run(cmd, check=True)
+            subprocess.run(cmd, check=True)
     else:
         with zipfile.ZipFile(tarball_fn, "r") as zip_ref:
             zip_ref.extractall(to_fn)

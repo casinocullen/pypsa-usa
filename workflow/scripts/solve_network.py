@@ -149,7 +149,9 @@ def prepare_network(
         buses_i = n.buses.query("carrier == 'AC'").index
         if not np.isscalar(load_shedding):
             # TODO: do not scale via sign attribute (use Eur/MWh instead of Eur/kWh)
-            load_shedding = 1e2  # Eur/kWh
+            load_shedding = 1e3  # Eur/kWh
+        else:
+            load_shedding = 1e3  # Eur/kWh
 
         n.madd(
             "Generator",
@@ -271,7 +273,7 @@ def add_RPS_constraints(n, config):
         "hydro",
         "geothermal",
         "biomass",
-        "EGS",
+        "egs",
     ]
     ces_carriers = [
         "onwind",
@@ -280,7 +282,7 @@ def add_RPS_constraints(n, config):
         "solar",
         "hydro",
         "geothermal",
-        "EGS",
+        "egs",
         "biomass",
         "nuclear",
     ]
@@ -1120,10 +1122,10 @@ def solve_network(n, config, solving, opts="", **kwargs):
     set_of_options = solving["solver"]["options"]
     cf_solving = solving["options"]
 
-    # if len(n.investment_periods) > 1:
-    #     kwargs["multi_investment_periods"] = config["foresight"] == "perfect"
+    if len(n.investment_periods) > 1:
+        kwargs["multi_investment_periods"] = config["foresight"] == "perfect"
 
-    kwargs["multi_investment_periods"] = config["foresight"] == "perfect"
+    # kwargs["multi_investment_periods"] = config["foresight"] == "perfect"
 
     kwargs["solver_options"] = (
         solving["solver_options"][set_of_options] if set_of_options else {}
@@ -1220,6 +1222,10 @@ if __name__ == "__main__":
         co2_sequestration_potential=snakemake.params["co2_sequestration_potential"],
     )
 
+    # n.mremove("Bus", n.buses.loc[n.buses['carrier'] == 'AC'].index)
+    # n.mremove("Bus", n.buses.loc[n.buses['country']==''].index)
+
+    # print(n.buses.head(20))
     n = solve_network(
         n,
         config=snakemake.config,

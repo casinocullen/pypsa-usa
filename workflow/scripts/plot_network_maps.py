@@ -547,7 +547,7 @@ def plot_renewable_potential(
     # get data
     renew = n.generators[
         (n.generators.p_nom_max != np.inf)
-        & (n.generators.build_year == 2030)
+        # & (n.generators.build_year == 2030)
         & (
             n.generators.carrier.isin(
                 ["onwind", "offwind", "offwind_floating", "solar", "EGS"],
@@ -680,13 +680,13 @@ if __name__ == "__main__":
         **snakemake.wildcards,
         save=snakemake.output["capacity_map_optimized.pdf"],
     )
-    plot_new_capacity_map(
-        n,
-        onshore_regions,
-        carriers,
-        **snakemake.wildcards,
-        save=snakemake.output["capacity_map_new.pdf"],
-    )
+    # plot_new_capacity_map(
+    #     n,
+    #     onshore_regions,
+    #     carriers,
+    #     **snakemake.wildcards,
+    #     save=snakemake.output["capacity_map_new.pdf"],
+    # )
     plot_demand_map(
         n,
         onshore_regions,

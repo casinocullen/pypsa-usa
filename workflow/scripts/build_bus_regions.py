@@ -111,6 +111,7 @@ def main(snakemake):
     bus2sub.index = bus2sub.index.astype(str)
     bus2sub = bus2sub.reset_index().drop_duplicates(subset="sub_id").set_index("sub_id")
 
+    gpd_counties = gpd.read_file(snakemake.input.county_shapes)[['GEOID', 'NAME', 'STUSPS', 'geometry']].rename(columns={'NAME':'name', 'GEOID':'county', "STUSPS": 'state'}).set_index("county")
     gpd_countries = gpd.read_file(snakemake.input.country_shapes).set_index("name")
     gpd_states = gpd.read_file(snakemake.input.state_shapes).set_index("name")
     gpd_ba_shapes = gpd.read_file(snakemake.input.ba_region_shapes).set_index("name")[
@@ -126,6 +127,8 @@ def main(snakemake):
         agg_region_shapes = gpd_states.geometry
     elif aggregation_zones == "reeds_zone":
         agg_region_shapes = gpd_reeds.geometry
+    elif aggregation_zones == "county":
+        agg_region_shapes = gpd_counties.geometry
     else:
         ValueError(
             "zonal_aggregation must be either balancing_area, country, reeds_id, or state",
@@ -143,7 +146,7 @@ def main(snakemake):
     onshore_buses = n.buses[~n.buses.substation_off]
     bus2sub = pd.merge(
         bus2sub.reset_index(),
-        n.buses[["reeds_zone", "reeds_ba"]],
+        n.buses[["reeds_zone", "reeds_ba", 'county']],
         left_on="Bus",
         right_on=n.buses.index,
     ).set_index("sub_id")

@@ -129,6 +129,7 @@ def aggregate_to_substations(
             "interconnect",
             "state",
             "country",
+            "county",
             "balancing_area",
             "reeds_zone",
             "reeds_ba",
@@ -148,6 +149,8 @@ def aggregate_to_substations(
         zone = substations.state
     elif aggregation_zones == "reeds_zone":
         zone = substations.reeds_zone
+    elif aggregation_zones == "county":
+        zone = substations.county
     else:
         ValueError("zonal_aggregation must be either balancing_area, country or state")
 
@@ -173,9 +176,10 @@ def aggregate_to_substations(
             "nerc_reg",
             "trans_reg",
             "reeds_state",
+            # "county"
         ]
     else:
-        cols2drop = ["balancing_area", "substation_off", "sub_id", "state"]
+        cols2drop = ["balancing_area", "substation_off", "sub_id", "state", "county"]
 
     network_s.buses.drop(
         columns=cols2drop,
@@ -255,7 +259,8 @@ if __name__ == "__main__":
         aggregation_zones,
         params.aggregation_strategies,
     )
-    if snakemake.wildcards.simpl:
+    # For county level aggregation, we set simplify cluster to 0
+    if snakemake.wildcards.simpl and int(snakemake.wildcards.simpl) > 0:
         n.set_investment_periods(periods=snakemake.params.planning_horizons)
 
         n.loads_t.p = n.loads_t.p.iloc[:, 0:0]
@@ -275,7 +280,7 @@ if __name__ == "__main__":
         for attr in attr:
             n.storage_units_t[attr] = n.storage_units_t[attr].iloc[:, 0:0]
 
-        clustering = clustering_for_n_clusters(
+        clustering = clustering_for_n_clusters( 
             n,
             int(snakemake.wildcards.simpl),
             focus_weights=params.focus_weights,
@@ -284,6 +289,7 @@ if __name__ == "__main__":
             feature=params.simplify_network["feature"],
             aggregation_strategies=params.aggregation_strategies,
         )
+        print(clustering.busmap)
         n = clustering.network
 
         cluster_regions((clustering.busmap,), snakemake.input, snakemake.output)

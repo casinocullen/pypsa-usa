@@ -1,7 +1,7 @@
 ################# ----------- Rules to Build Network ---------- #################
 
 from itertools import chain
-
+import os
 
 rule build_shapes:
     params:
@@ -72,6 +72,7 @@ rule build_bus_regions:
         state_shapes=RESOURCES + "{interconnect}/state_boundaries.geojson",
         ba_region_shapes=RESOURCES + "{interconnect}/onshore_shapes.geojson",
         reeds_shapes=RESOURCES + "{interconnect}/reeds_shapes.geojson",
+        county_shapes=RESOURCES + "{interconnect}/county_shapes.geojson",
         offshore_shapes=RESOURCES + "{interconnect}/offshore_shapes.geojson",
         base_network=RESOURCES + "{interconnect}/elec_base_network.nc",
         bus2sub=RESOURCES + "{interconnect}/bus2sub.csv",
@@ -92,6 +93,7 @@ rule build_cost_data:
     params:
         costs=config_provider("costs"),
     input:
+        # base_network=RESOURCES + "{interconnect}/elec_base_network.nc",
         pudl=DATA + "pudl/pudl.sqlite",
         efs_tech_costs="repo_data/costs/EFS_Technology_Data.xlsx",
         efs_icev_costs="repo_data/costs/efs_icev_costs.csv",
@@ -112,7 +114,6 @@ rule build_cost_data:
 ATLITE_NPROCESSES = config["atlite"].get("nprocesses", 4)
 
 if config["enable"].get("build_cutout", False):
-
     rule build_cutout:
         params:
             snapshots=config["snapshots"],
@@ -344,6 +345,7 @@ rule build_electrical_demand:
 rule build_sector_demand:
     wildcard_constraints:
         end_use="residential|commercial|industry",
+        # end_use="commercial|industry",
     params:
         planning_horizons=config["scenario"]["planning_horizons"],
         profile_year=pd.to_datetime(config["snapshots"]["start"]).year,
@@ -353,6 +355,7 @@ rule build_sector_demand:
         demand_files=demand_raw_data,
         dissagregate_files=demand_dissagregate_data,
         demand_scaling_file=demand_scaling_data,
+        uri_demand="repo_data/ercot_specific/uri_real_demand.csv"
     output:
         elec_demand=RESOURCES + "{interconnect}/{end_use}_electricity.csv",
         heat_demand=RESOURCES + "{interconnect}/{end_use}_heating.csv",
@@ -382,6 +385,7 @@ rule build_transport_road_demand:
         demand_files=demand_raw_data,
         dissagregate_files=demand_dissagregate_data,
         demand_scaling_file=demand_scaling_data,
+        uri_demand="repo_data/ercot_specific/uri_real_demand.csv"
     output:
         elec_light_duty=RESOURCES
         + "{interconnect}/{end_use}_light-duty_electricity.csv",
@@ -427,60 +431,139 @@ rule build_transport_other_demand:
     script:
         "../scripts/build_demand.py"
 
+if config["sector"]['heating']['naics']:
+    NAICS = [
+        '322130', '325199', '322110', '322121', 
+        '325311', '324110', '331111', '325211', 
+        '325110', '327410', '325193', '212391', 
+        '311221', '325181'
+    ]
 
-def demand_to_add(wildcards):
+    TEMP = [
+         '50',  '100',  '150',  '200',  '250', '300',  
+         '450', '500', '600', '800',  '850', '900',  
+         '1100', '1500'
+    ]
+
+    rule build_industrial_demand_naics:
+        params:
+            planning_horizons=config["scenario"]["planning_horizons"],
+            naics_list=NAICS,
+            temp_list=TEMP,
+            demand_output_dir = RESOURCES + "{interconnect}/industry_load_naics_temp/"
+        input:
+            network=RESOURCES + "{interconnect}/elec_base_network.nc",
+            epri = DATA + "industry_load/epri_industrial_loads.csv",
+            ind_demand = DATA + "heating/raw_ind_heat.csv"
+        output:
+            existing_cap = RESOURCES + "{interconnect}/ind_heat_existing_cap.csv",
+            # expand(RESOURCES + "{interconnect}/industry_load_naics_temp/industry-N{naics}_T{temp}_heating.csv",
+            #     naics=naics_list, 
+            #     temp = temp_list
+            # ),
+            add_to_demand = RESOURCES + "{interconnect}/add_to_demand.csv",
+            # demand_output_dir = RESOURCES + "{interconnect}/industry_load_naics_temp/"
+        log:
+            LOGS + "{interconnect}/ind_build_naics_demand.log",
+        benchmark:
+            BENCHMARKS + "{interconnect}/ind_build_naics_demand"
+        threads: 2
+        resources:
+            mem_mb=interconnect_mem,
+        script:
+            "../scripts/build_ind_naics_demand.py"
+
+
+def demand_to_add_cc(wildcards):
 
     if config["scenario"]["sector"] == "E":
         return RESOURCES + "{interconnect}/power_electricity.csv"
+    
+    elif config["sector"]['heating']['naics']:
+        fuels = ["electricity"]
 
-    else:
-
-        # service demand
-        services = ["residential", "commercial"]
-        if config["sector"]["service_sector"]["split_space_water_heating"]:
-            fuels = ["electricity", "cooling", "space-heating", "water-heating"]
-        else:
-            fuels = ["electricity", "cooling", "heating"]
-        service_demands = [
-            RESOURCES + "{interconnect}/" + service + "_" + fuel + ".csv"
-            for service in services
-            for fuel in fuels
-        ]
-
-        # industrial demand
-        fuels = ["electricity", "heating"]
         industrial_demands = [
             RESOURCES + "{interconnect}/industry_" + fuel + ".csv" for fuel in fuels
         ]
 
-        # road transport demands
-        vehicles = ["light-duty", "med-duty", "heavy-duty", "bus"]
-        fuels = ["lpg", "electricity"]
-        road_demand = [
-            RESOURCES + "{interconnect}/transport_" + vehicle + "_" + fuel + ".csv"
-            for vehicle in vehicles
-            for fuel in fuels
+        industrial_demands_naics = glob.glob(RESOURCES + str(wildcards.interconnect) + "/industry_load_naics_temp/*")
+
+        return chain(industrial_demands, industrial_demands_naics)
+
+
+    else:
+
+        # service demand
+        # services = ["residential", "commercial"]
+
+        # if config["sector"]["service_sector"]["split_space_water_heating"]:
+        #     fuels = ["electricity", "cooling", "space-heating", "water-heating"]
+        # else:
+        #     fuels = ["electricity", "cooling", "heating"]
+        # service_demands = [
+        #     RESOURCES + "{interconnect}/" + service + "_" + fuel + ".csv"
+        #     for service in services
+        #     for fuel in fuels
+        # ]
+
+        # industrial demand
+        # fuels = ["electricity", "heating"]
+        fuels = ["electricity"]
+
+        industrial_demands = [
+            RESOURCES + "{interconnect}/industry_" + fuel + ".csv" for fuel in fuels
         ]
 
-        # other transport demands
-        vehicles = ["boat-shipping", "rail-shipping", "rail-passenger", "air"]
-        fuels = ["lpg"]
-        non_road_demand = [
-            RESOURCES + "{interconnect}/transport_" + vehicle + "_" + fuel + ".csv"
-            for vehicle in vehicles
-            for fuel in fuels
-        ]
+        # # road transport demands
+        # vehicles = ["light-duty", "med-duty", "heavy-duty", "bus"]
+        # fuels = ["lpg", "electricity"]
+        # road_demand = [
+        #     RESOURCES + "{interconnect}/transport_" + vehicle + "_" + fuel + ".csv"
+        #     for vehicle in vehicles
+        #     for fuel in fuels
+        # ]
 
-        return chain(service_demands, industrial_demands, road_demand, non_road_demand)
+        # # other transport demands
+        # vehicles = ["boat-shipping", "rail-shipping", "rail-passenger", "air"]
+        # fuels = ["lpg"]
+        # non_road_demand = [
+        #     RESOURCES + "{interconnect}/transport_" + vehicle + "_" + fuel + ".csv"
+        #     for vehicle in vehicles
+        #     for fuel in fuels
+        # ]
+
+        # return chain(service_demands, industrial_demands, road_demand, non_road_demand)
+        return chain(industrial_demands)
 
 
-rule add_demand:
+# rule add_demand:
+#     params:
+#         sectors=config["scenario"]["sector"],
+#         planning_horizons=config["scenario"]["planning_horizons"],
+#     input:
+#         network=RESOURCES + "{interconnect}/elec_base_network.nc",
+#         demand=demand_to_add,
+#     output:
+#         network=RESOURCES + "{interconnect}/elec_base_network_dem.nc",
+#     log:
+#         LOGS + "{interconnect}/add_demand.log",
+#     benchmark:
+#         BENCHMARKS + "{interconnect}/add_demand"
+#     resources:
+#         mem_mb=interconnect_mem,
+#     script:
+#         "../scripts/add_demand.py"
+
+rule add_demand_cc:
     params:
         sectors=config["scenario"]["sector"],
         planning_horizons=config["scenario"]["planning_horizons"],
     input:
         network=RESOURCES + "{interconnect}/elec_base_network.nc",
-        demand=demand_to_add,
+        demand=demand_to_add_cc,
+        add_to_demand = lambda w: (
+            RESOURCES + "{interconnect}/add_to_demand.csv" if config["sector"]['heating']['naics'] else []
+            )
     output:
         network=RESOURCES + "{interconnect}/elec_base_network_dem.nc",
     log:
@@ -580,6 +663,8 @@ rule add_electricity:
         hydro_breakthrough=DATA + "breakthrough_network/base_grid/hydro.csv",
         bus2sub=RESOURCES + "{interconnect}/bus2sub.csv",
         pudl_fuel_costs=RESOURCES + "{interconnect}/pudl_fuel_costs.csv",
+        # plants_tx=f"repo_data/ercot_specific/{config['capacity_from_reeds']}.csv",
+        ercot_outage = "repo_data/ercot_specific/outage_share_2020_2024.csv",
     output:
         RESOURCES + "{interconnect}/elec_base_network_l_pp.nc",
     log:
@@ -663,7 +748,6 @@ rule cluster_network:
     script:
         "../scripts/cluster_network.py"
 
-
 rule add_extra_components:
     input:
         **{
@@ -679,10 +763,15 @@ rule add_extra_components:
             RESOURCES + "costs/costs_{year}.csv",
             year=config["scenario"]["planning_horizons"],
         ),
+        temp_air_total = RESOURCES + "{interconnect}/temp_air_total_elec_s{simpl}_c{clusters}.nc",
         regions_onshore=RESOURCES
         + "{interconnect}/regions_onshore_s{simpl}_{clusters}.geojson",
+        geo_egs_sc=DATA + config["electricity"]["geothermal"]["egs_sc_file"],
     params:
+        planning_horizons=config["scenario"]["planning_horizons"],
+        snapshots=config["snapshots"],
         retirement=config["electricity"].get("retirement", "technical"),
+        cost_reduction=config["electricity"]["geothermal"]["egs_reduction"],
     output:
         RESOURCES + "{interconnect}/elec_s{simpl}_c{clusters}_ec.nc",
     log:
@@ -694,6 +783,34 @@ rule add_extra_components:
         "prepare"
     script:
         "../scripts/add_extra_components.py"
+
+# if config["electricity"]['geothermal']['egs']:
+#     rule add_geothermal:
+#         input:
+#             network= RESOURCES + "{interconnect}/elec_s_{clusters}_ec.nc",
+#             tech_costs=lambda wildcards: expand(
+#                 RESOURCES + "costs/costs_{year}.csv",
+#                 year=config["scenario"]["planning_horizons"],
+#             ),
+#             regions_onshore=RESOURCES
+#             + "{interconnect}/regions_onshore_s_{clusters}.geojson",
+#             geo_egs_sc=DATA + config["electricity"]["geothermal"]["egs_sc_file"],
+#         params:
+#             cost_reduction=config["electricity"]["geothermal"]["egs_reduction"],
+#         output:
+#             network=RESOURCES + "{interconnect}/elec_s_{clusters}_ec_geo.nc",
+#             geo_test = RESOURCES + "{interconnect}/geo_test.csv",
+#         log:
+#             "logs/add_geothermal/{interconnect}/elec_s_{clusters}_ec.log",
+#         threads: 1
+#         resources:
+#             mem_mb=interconnect_mem_prepare,
+#         group:
+#             "prepare"
+#         script:
+#             "../scripts/build_egs_potential.py"
+
+
 
 
 rule prepare_network:

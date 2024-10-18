@@ -4,6 +4,7 @@ Combines all time independent cost data sources into a standard format.
 
 import logging
 from typing import Any, Optional
+import pypsa
 
 import constants as const
 import duckdb
@@ -213,6 +214,9 @@ if __name__ == "__main__":
     tech_year = snakemake.wildcards.year
     years = range(2021, 2051)
     tech_year = min(years, key=lambda x: abs(x - int(tech_year)))
+    # CC: need historical fuel data
+    if tech_year <= 2024:
+        tech_year = 2024
 
     emissions_data = EMISSIONS_DATA
 
@@ -238,7 +242,6 @@ if __name__ == "__main__":
         )
         .reset_index(drop=True)
     )
-
     # Filter for the correct year, scenario, and model case
     pudl_atb = pudl_atb[pudl_atb.projection_year == tech_year]
     pudl_atb = pudl_atb[pudl_atb.scenario_atb == atb_params.get("scenario", "Moderate")]
@@ -325,10 +328,72 @@ if __name__ == "__main__":
         },
         {"pypsa-name": "HVDC inverter pair", "parameter": "wacc_real", "value": 0.044},
     ]
+
     pudl_atb = pd.concat(
         [pudl_atb, pd.DataFrame(emissions_data), pd.DataFrame(transmission_data)],
         ignore_index=True,
     )
+    
+    # Add geothermal storage
+    if any("GGS" in s for s in snakemake.config["electricity"]["extendable_carriers"]["StorageUnit"]): 
+        pudl_geo_storage = [
+            {
+                "pypsa-name": "GGS",
+                "parameter": "capex_per_kw",
+                "value": 3000,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "cost_recovery_period_years",
+                "value": 30,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "capex_overnight_per_kw",
+                "value": 3000,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "capex_grid_connection_per_kw",
+                "value": 100,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "capex_construction_finance_factor",
+                "value": 33.207,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "fuel_cost_per_mwh",
+                "value": 0,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "fuel_cost_per_mwh",
+                "value": 0,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "opex_fixed_per_kw",
+                "value": 20.1500,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "opex_variable_per_mwh",
+                "value": 0.04819379,
+            },
+            {
+                "pypsa-name": "GGS",
+                "parameter": "wacc_real",
+                "value": 0.04819379,
+            },
+        ]
+        pudl_atb = pd.concat(
+            [pudl_atb, pd.DataFrame(pudl_geo_storage)],
+            ignore_index=True,
+    )
+
+
     pudl_atb.drop_duplicates(
         subset=["pypsa-name", "parameter"],
         keep="last",

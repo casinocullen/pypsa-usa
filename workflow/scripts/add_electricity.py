@@ -119,6 +119,7 @@ def add_co2_emissions(n, costs, carriers):
     """
     suptechs = n.carriers.loc[carriers].index.str.split("-").str[0]
     n.carriers.loc[carriers, "co2_emissions"] = costs.co2_emissions[suptechs].values
+    n.carriers['co2_emissions'] = n.carriers['co2_emissions'].fillna(0)
     if any("CCS" in carrier for carrier in carriers):
         ccs_factor = (
             1
@@ -131,6 +132,114 @@ def add_co2_emissions(n, costs, carriers):
             / 100
         )
         n.carriers.loc[ccs_factor.index, "co2_emissions"] *= ccs_factor
+    n.carriers.loc['egs', "co2_emissions"] = 0
+    n.carriers.loc['geothermal', "co2_emissions"] = 0
+
+
+
+def load_costs(
+    tech_costs: str,
+    config: dict[str, Any],
+    max_hours: dict[str, Union[int, float]],
+    Nyears: float = 1.0,
+) -> pd.DataFrame:
+
+    # set all asset costs and other parameters
+    costs = pd.read_csv(tech_costs, index_col=[0, 1]).sort_index()
+
+    # correct units to MW
+    costs.loc[costs.unit.str.contains("/kW"), "value"] *= 1e3
+    costs.unit = costs.unit.str.replace("/kW", "/MW")
+
+    # polulate missing values with user provided defaults
+    fill_values = config["fill_values"]
+    costs = costs.value.unstack().fillna(fill_values)
+
+    costs["capital_cost"] = (
+        (
+            calculate_annuity(costs["lifetime"], costs["discount rate"])
+            + costs["FOM"] / 100.0
+        )
+        * costs["investment"]
+        * Nyears
+    )
+
+    costs.at["OCGT", "fuel"] = costs.at["gas", "fuel"]
+    costs.at["CCGT", "fuel"] = costs.at["gas", "fuel"]
+
+    costs["marginal_cost"] = costs["VOM"] + costs["fuel"] / costs["efficiency"]
+
+    costs = costs.rename(columns={"CO2 intensity": "co2_emissions"})
+
+    costs.at["OCGT", "co2_emissions"] = costs.at["gas", "co2_emissions"]
+    costs.at["CCGT", "co2_emissions"] = costs.at["gas", "co2_emissions"]
+    costs.loc["waste", "co2_emissions"] = 0.1016  # revisit, EPA data
+
+    costs.at["solar", "capital_cost"] = (
+        config["rooftop_share"] * costs.at["solar-rooftop", "capital_cost"]
+        + (1 - config["rooftop_share"]) * costs.at["solar-utility", "capital_cost"]
+    )
+
+    def costs_for_storage(store, link1, link2=None, max_hours=1.0):
+        capital_cost = link1["capital_cost"] + max_hours * store["capital_cost"]
+        if link2 is not None:
+            capital_cost += link2["capital_cost"]
+        return pd.Series(
+            dict(capital_cost=capital_cost, marginal_cost=0.0, co2_emissions=0.0),
+        )
+
+    costs.loc["battery"] = costs_for_storage(
+        costs.loc["battery storage"],
+        costs.loc["battery inverter"],
+        max_hours=max_hours["battery"],
+    )
+    costs.loc["H2"] = costs_for_storage(
+        costs.loc["hydrogen storage underground"],
+        costs.loc["fuel cell"],
+        costs.loc["electrolysis"],
+        max_hours=max_hours["H2"],
+    )
+
+    for attr in ("marginal_cost", "capital_cost"):
+        overwrites = config.get(attr)
+        if overwrites is not None:
+            overwrites = pd.Series(overwrites)
+            costs.loc[overwrites.index, attr] = overwrites
+
+    return costs
+
+
+def add_annualized_capital_costs(
+    costs: pd.DataFrame,
+    Nyears: float = 1.0,
+) -> pd.DataFrame:
+    """
+    Adds column to calculate annualized capital costs only.
+    """
+
+    costs["investment_annualized"] = (
+        calculate_annuity(costs["lifetime"], costs["discount rate"])
+        * costs["investment"]
+        * Nyears
+    )
+    return costs
+
+
+def calculate_annuity(n, r):
+    """
+    Calculate the annuity factor for an asset with lifetime n years and.
+
+    discount rate of r, e.g. annuity(20, 0.05) * 20 = 1.6
+    """
+    if isinstance(r, pd.Series):
+        return pd.Series(1 / n, index=r.index).where(
+            r == 0,
+            r / (1.0 - 1.0 / (1.0 + r) ** n),
+        )
+    elif r > 0:
+        return r / (1.0 - 1.0 / (1.0 + r) ** n)
+    else:
+        return 1 / n
 
 
 def add_missing_carriers(n, carriers):
@@ -187,6 +296,7 @@ def update_capital_costs(
 
     # find final annualized capital cost
     gen["capital_cost"] = gen["annualized_capex_per_mw"] + gen["fom"]
+    gen["capital_cost"] = gen["capital_cost"] * Nyears
 
     # overwrite network generator dataframe with updated values
     n.generators.loc[gen.index] = gen
@@ -391,7 +501,9 @@ def attach_conventional_generators(
         lower=0,
     ).fillna(0)
 
-    committable_fields = ["start_up_cost", "min_down_time", "min_up_time", "p_min_pu"]
+    # print(plants['annualized_capex_fom'].head(30))
+
+    committable_fields = ["start_up_cost", 'shut_down_cost', "min_down_time", "min_up_time", "p_min_pu"]
     for attr in committable_fields:
         default = pypsa.components.component_attrs["Generator"].default[attr]
         if unit_commitment:
@@ -420,10 +532,12 @@ def attach_conventional_generators(
         marginal_cost=plants.marginal_cost,
         capital_cost=plants.annualized_capex_fom,
         build_year=plants.build_year.fillna(0).astype(int),
-        lifetime=plants.carrier.map(costs.cost_recovery_period_years),
+        # lifetime=plants.carrier.map(costs.cost_recovery_period_years),
+        lifetime=np.inf,
         committable=unit_commitment,
         **committable_attrs,
     )
+
 
     # Add fuel and VOM costs to the network
     n.generators.loc[plants.index, "vom_cost"] = plants.carrier.map(
@@ -483,6 +597,7 @@ def attach_wind_and_solar(
             #     # )
             # else:
             capital_cost = costs.at[car, "annualized_capex_fom"]
+            costs["efficiency"] = costs.efficiency.fillna(1)
 
             bus2sub = (
                 pd.read_csv(input_profiles.bus2sub, dtype=str)
@@ -713,7 +828,6 @@ def clean_bus_data(n: pypsa.Network):
         "load_dissag",
         "LAF",
         "LAF_state",
-        "county",
     ]
     n.buses.drop(columns=[col for col in col_list if col in n.buses], inplace=True)
 
@@ -776,7 +890,6 @@ def attach_breakthrough_renewable_plants(
         )
     return n
 
-
 def apply_pudl_fuel_costs(
     n,
     plants,
@@ -792,7 +905,11 @@ def apply_pudl_fuel_costs(
         if gen not in plants.index:
             continue
         carrier = plants.loc[gen, "carrier"]
+        # CC: `other` don't have records in costs
+        if carrier == 'other':
+            continue
         vom.loc[gen, "VOM"] = costs.at[carrier, "opex_variable_per_mwh"]
+
 
     # Apply the VOM to the fuel costs
     pudl_fuel_costs = pudl_fuel_costs + vom.squeeze()
@@ -829,6 +946,11 @@ def main(snakemake):
     costs = pd.read_csv(snakemake.input.tech_costs)
     costs = costs.pivot(index="pypsa-name", columns="parameter", values="value")
 
+    # CC: need to multiply by Nyears so the annualized CAPEX reflect to less than 1 year
+    costs["annualized_capex_fom"] = costs["annualized_capex_fom"] * Nyears
+    costs["annualized_capex_per_mw_km"] = costs["annualized_capex_per_mw_km"] * Nyears
+
+    # CC: also need to update transimission costs based on snapshots
     update_transmission_costs(n, costs, params.length_factor)
 
     renewable_carriers = set(params.renewable_carriers)

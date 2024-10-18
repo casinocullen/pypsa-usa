@@ -71,6 +71,8 @@ rule retrieve_nrel_efs_data:
         "logs/retrieve/retrieve_efs_{efs_case}_{efs_speed}.log",
     conda:
         "../envs/environment.yaml"
+    resources:
+        mem_mb=40000
     script:
         "../scripts/retrieve_databundles.py"
 
@@ -152,18 +154,18 @@ COMSTOCK_FILES = [
 # https://github.com/snakemake/snakemake/issues/1122
 
 
-rule retrieve_res_eulp:
-    log:
-        "logs/retrieve/retrieve_res_eulp/{state}.log",
-    params:
-        stock="res",
-        profiles=RESSTOCK_FILES,
-        save_dir=DATA + "eulp/res",
-    output:
-        expand(DATA + "eulp/res/{{state}}/{profile}.csv", profile=RESSTOCK_FILES),
-        DATA + "eulp/res/{state}.csv",
-    script:
-        "../scripts/retrieve_eulp.py"
+# rule retrieve_res_eulp:
+#     log:
+#         "logs/retrieve/retrieve_res_eulp/{state}.log",
+#     params:
+#         stock="res",
+#         profiles=RESSTOCK_FILES,
+#         save_dir=DATA + "eulp/res",
+#     output:
+#         expand(DATA + "eulp/res/{{state}}/{profile}.csv", profile=RESSTOCK_FILES),
+#         DATA + "eulp/res/{state}.csv",
+#     script:
+#         "../scripts/retrieve_eulp.py"
 
 
 rule retrieve_com_eulp:

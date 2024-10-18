@@ -2618,11 +2618,14 @@ if __name__ == "__main__":
             fuels,
             sns=sns,
         )  # dict[str, pd.DataFrame]
+        
 
     # scale demand and align snapshots. this is outside the main read/write
     # strategy as extra arguments are required to fill in data
 
     demand_scale_file = snakemake.input.get("demand_scaling_file", None)
+    # demand_scale_factor = demand_params.get("scale", 1)
+    demand_scale_factor = 1
 
     demand_formatter = DemandFormatter(
         n=n,
@@ -2647,6 +2650,8 @@ if __name__ == "__main__":
             formatted_demand[fuel] = demand_formatter.format_demand(demand, end_use)
 
     # electricity sector study
+    # formatted_demand["electricity"] = formatted_demand["electricity"] * demand_scale_factor
+    
     if end_use == "power":
         formatted_demand["electricity"].round(4).to_csv(
             snakemake.output.elec_demand,

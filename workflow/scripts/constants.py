@@ -33,9 +33,11 @@ NG_Dol_MMBTU_2_MWH = 3.4129
 LBS_TON = 2000  # lbs/ short ton
 COAL_BTU_LB = 9396  # BTU/lb - EIA US AVERAGE TODO: differentiate between coal types
 MMBTU_MWHthemal = 3.4129  # MMBTU to MWh_thermal
+# CC: BTU to MMBTU should * 1e6 not 1e3
 COAL_dol_ton_2_MWHthermal = (
-    LBS_TON**-1 * COAL_BTU_LB * 1000**-1 * MMBTU_MWHthemal
-)  # $/ton * ton/BTU * BTU/MWh_thermal
+    LBS_TON * COAL_BTU_LB * 1000000**-1 * MMBTU_MWHthemal**-1
+) ** -1  # $/ton * ton/BTU * BTU/MWh_thermal
+
 
 # (TBTU) (1e6 MMBTU / TBTU) (MWh / MMBTU)
 TBTU_2_MWH = 1e6 * (1 / MMBTU_MWHthemal)
@@ -81,6 +83,8 @@ ADS_TECH_MAPPER = {
     "Natural Gas_Combined Cycle": "CCGT",
     "Uranium_Nuclear": "nuclear",
     "Electricity_Non-Tracking": "battery storage",
+    "Geo_Binary": "egs",
+
 }
 
 # maps ADS sub-type tech name to PyPSA name
@@ -126,6 +130,8 @@ ADS_SUB_TYPE_TECH_MAPPER = {
     "hydro": "hydro",
     "DC-Intertie": "other",
     "VAR-Device": "other",
+    "Geo-BinaryCycle": "egs",
+
 }
 
 # maps ADS carrier names to PyPSA name
@@ -154,6 +160,8 @@ ADS_CARRIER_NAME = {
     "WDS": "biomass",
     "Biomass Waste": "waste",
     "LFG": "waste",
+    "Geo": "egs",
+
 }
 
 # maps ADS fuel name to PyPSA name
@@ -906,6 +914,24 @@ ATB_TECH_MAPPER = {
         "technology": "PumpedStorageHydro",
         "techdetail": "NatlClass1",
         "crp": 100,
+    },
+    "egs": {
+        "technology": "Geothermal",
+        "techdetail": "DeepEGSBinary",
+        "display_name": "Geothermal - Deep EGS / Binary",
+        "crp": 30,
+    },
+    "GGS": {
+        "technology": "PumpedStorageHydro",
+        "techdetail": "NatlClass1",
+        "display_name": "Pumped Storage Hydropower - National Class 1",
+        "crp": 20,
+    },
+    "GGS-GEO": {
+        "technology": "PumpedStorageHydro",
+        "techdetail": "NatlClass1",
+        "display_name": "Pumped Storage Hydropower - National Class 1",
+        "crp": 20,
     },
 }
 

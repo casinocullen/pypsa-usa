@@ -9,6 +9,7 @@ def sector_input_files(wildcards):
         + f"costs/sector_costs_{config['scenario']['planning_horizons'][0]}.csv",
     }
     sectors = wildcards.sector.split("-")
+    counties = DATA + "counties/cb_2020_us_county_500k.shp"
     if "G" in sectors:
         ng_files = {
             "county": DATA + "counties/cb_2020_us_county_500k.shp",
@@ -33,9 +34,24 @@ def sector_input_files(wildcards):
             "ev_policy": config["sector"]["transport"]["ev_policy"],
             "residential_stock": "repo_data/sectors/residential_stock",
             "commercial_stock": "repo_data/sectors/commercial_stock",
+            "ind_existing_cap": RESOURCES
+            + "{interconnect}/ind_heat_existing_cap.csv",
+            "busmap": RESOURCES
+            + "{interconnect}/busmap_s{simpl}_{clusters}.csv",
+            "bus_gis": RESOURCES
+            + "{interconnect}/bus_gis.csv",
+        }
+        geothermal_files = {
+            "direct_use": DATA + "heating/geophires_direct_heat.csv",
+            "regions_onshore": RESOURCES
+            + "{interconnect}/regions_onshore_s{simpl}_{clusters}.geojson",
+            'geo_egs_sc': DATA + config["electricity"]["geothermal"]["egs_sc_file"],
         }
         input_files.update(ng_files)
 
+        if config["electricity"]["geothermal"]["heating"]:
+            input_files.update(geothermal_files)
+        
     return input_files
 
 
@@ -48,8 +64,15 @@ rule add_sectors:
         snapshots=config["snapshots"],
         api=config["api"],
         sector=config["sector"],
+        geothermal_heating = config["electricity"]["geothermal"]['heating'],
     input:
         unpack(sector_input_files),
+        # counties = DATA + "counties/cb_2020_us_county_500k.shp",
+        # pop_layout_total=RESOURCES + "{interconnect}/pop_layout_total.nc",
+        # pop_layout_urban=RESOURCES + "{interconnect}/pop_layout_urban.nc",
+        # pop_layout_rural=RESOURCES + "{interconnect}/pop_layout_rural.nc",
+        # temp_soil=RESOURCES + "{interconnect}/temp_soil_{scope}_elec_s_{clusters}.nc",
+        # temp_air=RESOURCES + "{interconnect}/temp_air_{scope}_elec_s_{clusters}.nc",
     output:
         network=RESOURCES
         + "{interconnect}/elec_s{simpl}_c{clusters}_ec_l{ll}_{opts}_{sector}.nc",
@@ -61,10 +84,12 @@ rule add_sectors:
     resources:
         mem_mb=4000,
     script:
-        "../scripts/add_sectors.py"
+        "../scripts/add_sectors_cc.py"
 
 
 rule build_population_layouts:
+    params:
+        cutouts=config["atlite"]["cutouts"],
     input:
         county_shapes=DATA + "counties/cb_2020_us_county_500k.shp",
         urban_percent=DATA + "urbanization/DECENNIALDHC2020.H2-Data.csv",
@@ -122,6 +147,25 @@ rule build_population_layouts:
 #     script:
 #         "../scripts/build_heat_demand.py"
 
+rule build_hourly_heat_demand:
+    params:
+        snapshots={k: config["snapshots"][k] for k in ["start", "end", "inclusive"]},
+    input:
+        heat_profile="data/heat_load_profile_BDEW.csv",
+        heat_demand=RESOURCES + "{interconnect}/daily_heat_demand_{scope}_elec_s_{clusters}.nc",
+    output:
+        heat_demand=RESOURCES + "{interconnect}/hourly_heat_demand_{scope}_elec_s_{clusters}.nc",
+    resources:
+        mem_mb=2000,
+    threads: 8
+    log:
+        LOGS + "{interconnect}/build_hourly_heat_demand_{scope}_{clusters}.loc",
+    benchmark:
+        BENCHMARKS + "{interconnect}/build_hourly_heat_demand/{scope}_s_{clusters}"
+    conda:
+        "../envs/environment.yaml"
+    script:
+        "../scripts/build_hourly_heat_demand.py"
 
 rule build_temperature_profiles:
     params:

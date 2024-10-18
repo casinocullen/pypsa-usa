@@ -43,6 +43,8 @@ if __name__ == "__main__":
 
     demand_files = snakemake.input.demand
     n = pypsa.Network(snakemake.input.network)
+    print(demand_files)
+
 
     sectors = snakemake.params.sectors
 
@@ -90,7 +92,6 @@ if __name__ == "__main__":
     else:  # sector files
 
         for demand_file in demand_files:
-
             parsed_name = Path(demand_file).name.split("_")
             parsed_name[-1] = parsed_name[-1].split(".csv")[0]
 
@@ -115,6 +116,20 @@ if __name__ == "__main__":
 
                 log_statement = (
                     f"{sector} {subsector} {end_use} demand added to network"
+                )
+
+            elif len(parsed_name) == 4:
+
+                sector = parsed_name[0]
+                naics = parsed_name[1]
+                temp = parsed_name[2]
+                end_use = parsed_name[3]
+
+                carrier = f"{sector_mapper[sector]}-{naics}-{temp}-{carrier_mapper[end_use]}"
+                suffix = f"-{carrier}"
+
+                log_statement = (
+                    f"{sector} {end_use} {naics} {temp} demand added to network"
                 )
 
             else:

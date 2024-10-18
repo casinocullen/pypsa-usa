@@ -1,3 +1,4 @@
+
 import logging
 from collections import OrderedDict
 from pathlib import Path
@@ -855,7 +856,8 @@ def plot_state_generation_mix(
 
     colors = n.carriers.color.to_dict()
     colors["natural gas"] = colors.pop("CCGT")
-    colors["other"] = colors.pop("load")
+    # colors["other"] = colors.pop("load")
+    colors["other"] = "#ba91b1"
 
     # Create Heatmap
     fig, ax = plt.subplots()
@@ -909,7 +911,7 @@ def plot_state_generation_capacities(
         columns="carrier",
         values="capacity",
     )
-    generation_pivot.drop(columns=["load"], inplace=True)
+    # generation_pivot.drop(columns=["load"], inplace=True)
 
     # Create Stacked Bar Plot for each State's Generation Mix
     colors = n.carriers.color.to_dict()
@@ -1140,12 +1142,13 @@ def main(snakemake):
     #     **snakemake.wildcards,
     # )
 
-    plot_load_shedding_map(
-        n,
-        snakemake.output["val_map_load_shedding.pdf"],
-        onshore_regions,
-        **snakemake.wildcards,
-    )
+    if snakemake.config["solving"]["options"]["load_shedding"]:
+        plot_load_shedding_map(
+            n,
+            snakemake.output["val_map_load_shedding.pdf"],
+            onshore_regions,
+            **snakemake.wildcards,
+        )
 
     n.statistics().to_csv(snakemake.output["val_statistics"])
 

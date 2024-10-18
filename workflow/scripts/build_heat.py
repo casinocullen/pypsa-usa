@@ -11,6 +11,7 @@ import pypsa
 import xarray as xr
 from constants import NG_MWH_2_MMCF, STATE_2_CODE, COAL_dol_ton_2_MWHthermal
 from eia import FuelCosts
+from _helpers import calculate_annuity
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,11 @@ def build_heat(
     pop_layout_path: str,
     cop_ashp_path: str,
     cop_gshp_path: str,
+    ind_existing_path: Optional[str] = None,
+    busmap_path: Optional[str] = None,
+    bus_gis_path: Optional[str] = None,
     dynamic_pricing: bool = False,
+    sectors_include = ["res", "com", "ind"],
     eia: Optional[str] = None,  # for dynamic pricing
     year: Optional[int] = None,  # for dynamic pricing
     **kwargs,
@@ -29,7 +34,7 @@ def build_heat(
     """
     Main funtion to interface with.
     """
-
+    print('Start building heat')
     sns = n.snapshots
 
     pop_layout = pd.read_csv(pop_layout_path).set_index("name")
@@ -43,7 +48,7 @@ def build_heat(
     if dynamic_pricing:
         assert year
 
-    for sector in ("res", "com", "ind"):
+    for sector in sectors_include:
 
         if sector in ("res", "com"):
 
@@ -104,6 +109,52 @@ def build_heat(
                 marginal_gas=gas_costs,
                 marginal_coal=coal_costs,
             )
+
+        elif sector == "ind-naics":
+
+            heat_carrier_list = n.loads[n.loads['carrier'].str.endswith('heat')]['carrier'].unique()
+
+            if dynamic_pricing:
+                assert eia
+                gas_costs = _get_dynamic_marginal_costs(
+                    n,
+                    "gas",
+                    eia,
+                    year,
+                    sector='ind'
+                )
+                coal_costs = _get_dynamic_marginal_costs(n, "coal", eia, year)
+                oil_costs = _get_dynamic_marginal_costs(n, "heating_oil", eia, year)
+            else:
+                gas_costs = costs.at["gas", "fuel"]
+                coal_costs = costs.at["coal", "fuel"]
+                oil_costs = costs.at["heating_oil", "fuel"]
+
+            for carrier in heat_carrier_list:
+                existing_mw = pd.read_csv(ind_existing_path)
+                existing_mw['Bus'] = existing_mw['Bus'].astype('str')
+                busmap = pd.read_csv(busmap_path)
+                bus_gis = pd.read_csv(bus_gis_path)
+                
+
+                # Find crosswalk from substation to cluster buses
+                bus_gis_map = get_existing_heating_mw(bus_gis, busmap)
+                # Calculate MW per bus after clustering
+                existing_mw_bus = existing_mw.merge(bus_gis_map, on = ['Bus'], how = 'inner')
+                existing_mw_bus = existing_mw_bus.groupby(['bus','fuel', 'carrier_name'])['cap_mw_bus'].sum().reset_index()
+                existing_mw_bus['bus'] = existing_mw_bus['bus'] + ' ' + existing_mw_bus['carrier_name']
+
+                add_industrial_heat_naics(
+                    n,
+                    sector, 
+                    existing_mw_bus = existing_mw_bus, 
+                    costs=costs,
+                    marginal_gas=gas_costs,
+                    marginal_coal=coal_costs,
+                    marginal_oil=oil_costs,
+                    carrier_name = carrier
+                )
+
 
 
 def combined_heat(n: pypsa.Network, sector: str) -> bool:
@@ -285,20 +336,73 @@ def get_link_marginal_costs(
     return pd.concat(dfs)
 
 
+def get_existing_heating_mw(
+    bus_gis: pd.DataFrame,
+    busmap: pd.DataFrame,
+) -> None:
+    busmap = busmap.rename(columns={'Bus':'sub_id', 'busmap': 'bus'})
+    busmap['sub_id'] = busmap['sub_id'].apply(str)
+    bus_gis['sub_id'] = bus_gis['sub_id'].apply(str)
+
+    bus_gis_map = bus_gis.merge(busmap, on = ['sub_id'], how = 'outer')
+
+    return bus_gis_map
+
+
 def add_industrial_heat(
     n: pypsa.Network,
     sector: str,
     costs: pd.DataFrame,
     marginal_gas: Optional[pd.DataFrame | float] = None,
     marginal_coal: Optional[pd.DataFrame | float] = None,
+    carrier_name = None,
     **kwargs,
 ) -> None:
 
-    assert sector == "ind"
+    assert "ind" in sector
 
-    add_industrial_furnace(n, costs, marginal_gas)
-    add_industrial_boiler(n, costs, marginal_coal)
-    add_indusrial_heat_pump(n, costs)
+    add_industrial_furnace(n, costs, marginal_gas, carrier_name)
+    add_industrial_boiler(n, costs, marginal_coal, carrier_name)
+    add_indusrial_heat_pump_high(n, costs, carrier_name)
+
+
+
+def add_industrial_heat_naics(
+    n: pypsa.Network,
+    sector: str,
+    costs: pd.DataFrame,
+    existing_mw_bus: Optional[pd.DataFrame] = None,
+    marginal_gas: Optional[pd.DataFrame | float] = None,
+    marginal_coal: Optional[pd.DataFrame | float] = None,
+    marginal_oil: Optional[pd.DataFrame | float] = None,
+    carrier_name = None,
+    **kwargs,
+) -> None:
+
+    assert "ind" in sector
+
+    temp = carrier_name.split('-')[2]
+    temp = int(temp.replace("T", ""))
+
+    if not existing_mw_bus.empty: 
+        add_industrial_boiler_existing(n, costs, existing_mw_bus, marginal_gas, carrier_name)
+        add_industrial_furnace_existing(n, costs, existing_mw_bus,  marginal_gas, carrier_name)
+        add_industrial_oil_boiler_existing(n, costs, existing_mw_bus,  marginal_oil, carrier_name)
+
+    add_industrial_furnace(n, costs, marginal_gas, carrier_name)
+    add_industrial_boiler(n, costs, marginal_coal, carrier_name)
+    add_industrial_oil_boiler(n, costs, marginal_oil, carrier_name)
+    add_electric_boiler_furnace(n, costs, carrier_name)
+
+    # Add heat pump bashed on the temperature provided
+    if temp <= 125: 
+        add_indusrial_heat_pump_med(n, costs, carrier_name)
+    elif temp <= 150: 
+        add_indusrial_heat_pump_high(n, costs, carrier_name)
+    else: 
+        logger.warning(
+            f"Skip adding heat pump for {carrier_name} since unable to provide required heat."
+        )
 
 
 def add_service_heat(
@@ -1005,11 +1109,67 @@ def add_service_heat_pumps(
         lifetime=lifetime,
     )
 
-
-def add_industrial_furnace(
+def add_electric_boiler_furnace(
     n: pypsa.Network,
     costs: pd.DataFrame,
+    carrier_name = None
+) -> None:
+
+    sector = "ind"
+
+    capex = costs.at["Commercial Electric Resistance Heaters", "capital_cost"].round(1)
+    efficiency = costs.at["Commercial Electric Resistance Heaters", "efficiency"].round(1)
+    lifetime = costs.at["Commercial Electric Resistance Heaters", "lifetime"]
+
+    # CC: modify capex based on IRENA 2030 data
+    efficiency = 0.99
+    discount_rate = 0.05
+    fom = 0.02
+    overnight_cost = 175000
+    capacity_factor = 1
+
+    efficiency = capacity_factor * efficiency
+
+    Nyears = n.snapshot_weightings.loc[n.investment_periods[0]].objective.sum() / 8760.0
+
+    capex =   (
+        (calculate_annuity(lifetime,discount_rate) + 
+        fom) 
+        * overnight_cost * Nyears
+    )
+
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
+
+    loads = n.loads[(n.loads.carrier == carrier_name)]
+
+    boiler = pd.DataFrame(index=loads.bus)
+
+    boiler["state"] = boiler.index.map(n.buses.STATE)
+    boiler["bus0"] = boiler.index.map(lambda x: x.split(carrier_name)[0].strip())
+    boiler["bus1"] = boiler.index
+    boiler["carrier"] = f"{sector}-electric-boiler"
+    boiler.index = boiler.index.map(lambda x: x.split("-heat")[0])
+
+    n.madd(
+        "Link",
+        boiler.index,
+        suffix="-electric-boiler",  #'ind' included in index already
+        bus0=boiler.bus0,
+        bus1=boiler.bus1,
+        carrier=boiler.carrier,
+        efficiency=efficiency,
+        capital_cost=capex,
+        p_nom_extendable=True,
+        lifetime=lifetime,
+    )
+
+def add_industrial_furnace_existing(
+    n: pypsa.Network,
+    costs: pd.DataFrame,
+    existing_mw_bus: pd.DataFrame,
     marginal_cost: Optional[pd.DataFrame | float] = None,
+    carrier_name = None
 ) -> None:
 
     sector = "ind"
@@ -1018,12 +1178,110 @@ def add_industrial_furnace(
     efficiency = costs.at["direct firing gas", "efficiency"].round(1)
     lifetime = costs.at["direct firing gas", "lifetime"]
 
-    carrier_name = f"{sector}-heat"
+    # CC: modify capex based on IRENA 2030 data
+    efficiency = 0.95
+    fom = 2500 # per MW per year
+    capacity_factor = 0.85
+
+    efficiency = capacity_factor * efficiency
+
+    Nyears = n.snapshot_weightings.loc[n.investment_periods[0]].objective.sum() / 8760.0
+
+    capex =   (
+        fom * Nyears
+    )
+
+
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
+
+    loads = n.loads[(n.loads.carrier == carrier_name)]
+
+    existing_cap = existing_mw_bus[(existing_mw_bus.carrier_name == carrier_name) & 
+                                   (existing_mw_bus.fuel == 'gas')]
+
+    furnaces = pd.DataFrame(index=loads.bus)
+
+    furnaces["state"] = furnaces.index.map(n.buses.STATE)
+    furnaces["bus0"] = furnaces.index.map(lambda x: x.split(f" {sector}-heat")[0]).map(
+        n.buses.STATE,
+    )
+    furnaces["bus2"] = furnaces.bus0 + " ind-co2"
+    furnaces["bus0"] = furnaces.bus0 + " gas"
+    furnaces["bus1"] = furnaces.index
+    
+    furnaces["carrier"] = f"{sector}-gas-furnace"
+    furnaces.index = furnaces.index.map(lambda x: x.split("-heat")[0] + " existing")
+    furnaces["efficiency2"] = costs.at["gas", "co2_emissions"]
+
+    furnaces = furnaces.merge(existing_cap, left_on = ['bus1'], right_on= ['bus'], how = 'inner')
+    furnaces.index = furnaces.bus.map(lambda x: x.split("-heat")[0] + " existing")
+
+    if isinstance(marginal_cost, pd.DataFrame):
+        assert "state" in furnaces.columns
+        mc = get_link_marginal_costs(n, furnaces, marginal_cost)
+    elif isinstance(marginal_cost, (int, float)):
+        mc = marginal_cost
+    else:
+        mc = 0
+
+    n.madd(
+        "Link",
+        furnaces.index,
+        suffix="-gas-furnace-existing",  #'ind' included in index already
+        bus0=furnaces.bus0,
+        bus1=furnaces.bus1,
+        bus2=furnaces.bus2,
+        carrier=furnaces.carrier,
+        efficiency=efficiency,
+        efficiency2=furnaces.efficiency2,
+        capital_cost=capex,
+        p_nom_extendable=True,
+        p_nom=furnaces.cap_mw_bus,
+        p_nom_max=furnaces.cap_mw_bus,
+        lifetime=lifetime,
+        marginal_cost=mc,
+    )
+
+
+
+def add_industrial_furnace(
+    n: pypsa.Network,
+    costs: pd.DataFrame,
+    marginal_cost: Optional[pd.DataFrame | float] = None,
+    carrier_name = None
+) -> None:
+
+    sector = "ind"
+
+    # capex = costs.at["direct firing gas", "capital_cost"].round(1)
+    # efficiency = costs.at["direct firing gas", "efficiency"].round(1)
+    # lifetime = costs.at["direct firing gas", "lifetime"]
+
+    # CC: modify capex based on IRENA 2030 data
+    efficiency = 0.95
+    discount_rate = 0.05
+    fom = 2.5/100
+    overnight_cost = 100000
+    capacity_factor = 0.85
+    lifetime = 25
+
+    efficiency = capacity_factor * efficiency
+
+    Nyears = n.snapshot_weightings.loc[n.investment_periods[0]].objective.sum() / 8760.0
+
+    capex =   (
+        (calculate_annuity(lifetime,discount_rate) + 
+        fom) 
+        * overnight_cost * Nyears
+    )
+
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
 
     loads = n.loads[(n.loads.carrier == carrier_name)]
 
     furnaces = pd.DataFrame(index=loads.bus)
-
     furnaces["state"] = furnaces.index.map(n.buses.STATE)
     furnaces["bus0"] = furnaces.index.map(lambda x: x.split(f" {sector}-heat")[0]).map(
         n.buses.STATE,
@@ -1059,11 +1317,12 @@ def add_industrial_furnace(
         marginal_cost=mc,
     )
 
-
-def add_industrial_boiler(
+def add_industrial_boiler_existing(
     n: pypsa.Network,
-    costs: pd.DataFrame,
+    costs: pd.DataFrame, 
+    existing_mw_bus: pd.DataFrame, 
     marginal_cost: Optional[pd.DataFrame | float] = None,
+    carrier_name = None
 ) -> None:
 
     sector = "ind"
@@ -1073,11 +1332,194 @@ def add_industrial_boiler(
     # same source as tech-data, but its just not in latest version
 
     # capex approximated based on NG to incorporate fixed costs
-    capex = costs.at["direct firing gas", "capital_cost"].round(1) * 2.5
+    # CC: need update the cost
+    # capex = costs.at["Commercial Gas-Fired Boilers", "capital_cost"].round(1) * 2.5
     efficiency = 0.90
     lifetime = 25
 
-    carrier_name = f"{sector}-heat"
+    # CC: modify capex based on IRENA 2030 data
+    fom = 7500 #per MW/year
+    capacity_factor = 0.85
+
+    efficiency = capacity_factor * efficiency
+
+    Nyears = n.snapshot_weightings.loc[n.investment_periods[0]].objective.sum() / 8760.0
+
+    capex =   (
+        fom * Nyears
+    )
+
+
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
+
+    loads = n.loads[(n.loads.carrier == carrier_name)]
+
+    existing_cap = existing_mw_bus[(existing_mw_bus.carrier_name == carrier_name) & 
+                                   (existing_mw_bus.fuel == 'coal')]
+
+    boiler = pd.DataFrame(index=loads.bus)
+    boiler["state"] = boiler.index.map(n.buses.STATE)
+    boiler["bus0"] = boiler.index.map(lambda x: x.split(f" {sector}-heat")[0]).map(
+        n.buses.STATE,
+    )
+    boiler["bus2"] = boiler.bus0 + " ind-co2"
+    boiler["bus0"] = boiler.bus0 + " coal"
+    boiler["bus1"] = boiler.index
+    boiler["carrier"] = f"{sector}-coal-boiler"
+    boiler.index = boiler.index.map(lambda x: x.split("-heat")[0] + " existing")
+    boiler["efficiency2"] = costs.at["coal", "co2_emissions"]
+
+    boiler = boiler.merge(existing_cap, left_on = ['bus1'], right_on= ['bus'], how = 'inner')
+    boiler.index = boiler.bus.map(lambda x: x.split("-heat")[0] + " existing")
+
+    if isinstance(marginal_cost, pd.DataFrame):
+        assert "state" in boiler.columns
+        mc = get_link_marginal_costs(n, boiler, marginal_cost)
+    elif isinstance(marginal_cost, (int, float)):
+        mc = marginal_cost
+    else:
+        mc = 0
+
+    n.madd(
+        "Link",
+        boiler.index,
+        suffix="-coal-boiler-existing",  # 'ind' included in index already
+        bus0=boiler.bus0,
+        bus1=boiler.bus1,
+        bus2=boiler.bus2,
+        carrier=boiler.carrier,
+        efficiency=efficiency,
+        efficiency2=boiler.efficiency2,
+        capital_cost=capex,
+        p_nom_extendable=True,
+        p_nom=boiler.cap_mw_bus,
+        p_nom_max=boiler.cap_mw_bus,
+        lifetime=lifetime,
+        marginal_cost=mc,
+    )
+
+def add_industrial_oil_boiler_existing(
+    n: pypsa.Network,
+    costs: pd.DataFrame,
+    existing_mw_bus: pd.DataFrame, 
+    marginal_cost: Optional[pd.DataFrame | float] = None,
+    carrier_name = None
+) -> None:
+
+    sector = "ind"
+    # performance charasteristics taken from (Table 311.1a)
+    # https://ens.dk/en/our-services/technology-catalogues/technology-data-industrial-process-heat
+    # same source as tech-data, but its just not in latest version
+
+    # capex approximated based on NG to incorporate fixed costs
+    capex = costs.at["Commercial Oil-Fired Boilers", "capital_cost"].round(1) * 2.5
+
+    capacity_factor = 0.85
+
+    lifetime = 25
+
+    # CC: modify capex based on IRENA 2030 data
+    fom = 5000 # per MW per yr
+    efficiency = 0.85
+
+    efficiency = capacity_factor * efficiency
+
+    Nyears = n.snapshot_weightings.loc[n.investment_periods[0]].objective.sum() / 8760.0
+
+    capex =   (
+        fom * Nyears
+    )
+
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
+
+    loads = n.loads[(n.loads.carrier == carrier_name)]
+
+    existing_cap = existing_mw_bus[(existing_mw_bus.carrier_name == carrier_name) & 
+                                   (existing_mw_bus.fuel == 'oil')]
+
+    boiler = pd.DataFrame(index=loads.bus)
+    boiler["state"] = boiler.index.map(n.buses.STATE)
+    boiler["bus0"] = boiler.index.map(lambda x: x.split(f" {sector}-heat")[0]).map(
+        n.buses.STATE,
+    )
+    boiler["bus2"] = boiler.bus0 + " ind-co2"
+    boiler["bus0"] = boiler.bus0 + " oil"
+    boiler["bus1"] = boiler.index
+    boiler["carrier"] = f"{sector}-oil-boiler"
+    boiler.index = boiler.index.map(lambda x: x.split("-heat")[0] + " existing")
+    boiler["efficiency2"] = costs.at["oil", "co2_emissions"]
+
+    boiler = boiler.merge(existing_cap, left_on = ['bus1'], right_on= ['bus'], how = 'inner')
+    boiler.index = boiler.bus.map(lambda x: x.split("-heat")[0] + " existing")
+
+    if isinstance(marginal_cost, pd.DataFrame):
+        assert "state" in boiler.columns
+        mc = get_link_marginal_costs(n, boiler, marginal_cost)
+    elif isinstance(marginal_cost, (int, float)):
+        mc = marginal_cost
+    else:
+        mc = 0
+
+    n.madd(
+        "Link",
+        boiler.index,
+        suffix="-oil-boiler-existing",  # 'ind' included in index already
+        bus0=boiler.bus0,
+        bus1=boiler.bus1,
+        bus2=boiler.bus2,
+        carrier=boiler.carrier,
+        efficiency=efficiency,
+        efficiency2=boiler.efficiency2,
+        capital_cost=capex,
+        p_nom_extendable=True,
+        p_nom=boiler.cap_mw_bus,
+        p_nom_max=boiler.cap_mw_bus,
+        lifetime=lifetime,
+        marginal_cost=mc,
+    )
+
+
+
+def add_industrial_boiler(
+    n: pypsa.Network,
+    costs: pd.DataFrame,
+    marginal_cost: Optional[pd.DataFrame | float] = None,
+    carrier_name = None
+) -> None:
+
+    sector = "ind"
+
+    # performance charasteristics taken from (Table 311.1a)
+    # https://ens.dk/en/our-services/technology-catalogues/technology-data-industrial-process-heat
+    # same source as tech-data, but its just not in latest version
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
+
+    # capex approximated based on NG to incorporate fixed costs
+    # CC: need update the cost
+    # capex = costs.at["Commercial Gas-Fired Boilers", "capital_cost"].round(1) * 2.5
+    efficiency = 0.90
+    lifetime = 25
+
+
+    # CC: modify capex based on IRENA 2030 data
+    discount_rate = 0.05
+    fom = 7.5/300
+    overnight_cost = 300000 + 76635
+    capacity_factor = 0.85
+
+    efficiency = capacity_factor * efficiency
+
+    Nyears = n.snapshot_weightings.loc[n.investment_periods[0]].objective.sum() / 8760.0
+
+    capex =   (
+        (calculate_annuity(lifetime,discount_rate) + 
+        fom) 
+        * overnight_cost * Nyears
+    )
+
 
     loads = n.loads[(n.loads.carrier == carrier_name)]
 
@@ -1118,9 +1560,51 @@ def add_industrial_boiler(
     )
 
 
-def add_indusrial_heat_pump(
+def add_indusrial_heat_pump_med(
     n: pypsa.Network,
     costs: pd.DataFrame,
+    carrier_name = None
+) -> None:
+
+    sector = "ind"
+
+    capex = costs.at["industrial heat pump medium temperature", "capital_cost"].round(1)
+    efficiency = costs.at["industrial heat pump medium temperature", "efficiency"].round(
+        1,
+    )
+    lifetime = costs.at["industrial heat pump medium temperature", "lifetime"].round(1)
+
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
+
+    loads = n.loads[(n.loads.carrier == carrier_name)]
+
+    hp = pd.DataFrame(index=loads.bus)
+    hp["state"] = hp.index.map(n.buses.STATE)
+    # hp["bus0"] = hp.index.map(lambda x: x.split(f" {sector}-heat")[0])
+    hp["bus0"] = hp.index.map(lambda x: x.split(carrier_name)[0].strip())
+    hp["bus1"] = hp.index
+    hp["carrier"] = f"{sector}-heat-pump-med"
+    hp.index = hp.index.map(lambda x: x.split("-heat")[0])
+
+    n.madd(
+        "Link",
+        hp.index,
+        suffix="-heat-pump-med",  # 'ind' included in index already
+        bus0=hp.bus0,
+        bus1=hp.bus1,
+        carrier=hp.carrier,
+        efficiency=efficiency,
+        capital_cost=capex,
+        p_nom_extendable=True,
+        lifetime=lifetime,
+    )
+
+
+def add_indusrial_heat_pump_high(
+    n: pypsa.Network,
+    costs: pd.DataFrame,
+    carrier_name = None
 ) -> None:
 
     sector = "ind"
@@ -1131,21 +1615,23 @@ def add_indusrial_heat_pump(
     )
     lifetime = costs.at["industrial heat pump high temperature", "lifetime"].round(1)
 
-    carrier_name = f"{sector}-heat"
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
 
     loads = n.loads[(n.loads.carrier == carrier_name)]
 
     hp = pd.DataFrame(index=loads.bus)
     hp["state"] = hp.index.map(n.buses.STATE)
-    hp["bus0"] = hp.index.map(lambda x: x.split(f" {sector}-heat")[0])
+    # hp["bus0"] = hp.index.map(lambda x: x.split(f" {sector}-heat")[0])
+    hp["bus0"] = hp.index.map(lambda x: x.split(carrier_name)[0].strip())
     hp["bus1"] = hp.index
-    hp["carrier"] = f"{sector}-heat-pump"
+    hp["carrier"] = f"{sector}-heat-pump-high"
     hp.index = hp.index.map(lambda x: x.split("-heat")[0])
 
     n.madd(
         "Link",
         hp.index,
-        suffix="-heat-pump",  # 'ind' included in index already
+        suffix="-heat-pump-high",  # 'ind' included in index already
         bus0=hp.bus0,
         bus1=hp.bus1,
         carrier=hp.carrier,
@@ -1154,3 +1640,82 @@ def add_indusrial_heat_pump(
         p_nom_extendable=True,
         lifetime=lifetime,
     )
+
+
+def add_industrial_oil_boiler(
+    n: pypsa.Network,
+    costs: pd.DataFrame,
+    marginal_cost: Optional[pd.DataFrame | float] = None,
+    carrier_name = None
+) -> None:
+
+    sector = "ind"
+
+    # performance charasteristics taken from (Table 311.1a)
+    # https://ens.dk/en/our-services/technology-catalogues/technology-data-industrial-process-heat
+    # same source as tech-data, but its just not in latest version
+
+    # capex approximated based on NG to incorporate fixed costs
+    capex = costs.at["Commercial Oil-Fired Boilers", "capital_cost"].round(1) * 2.5
+    efficiency = 0.93
+    lifetime = 25
+
+    # CC: modify capex based on IRENA 2030 data
+    capacity_factor = 0.85
+    discount_rate = 0.05
+    fom = 5.0/200
+    overnight_cost = 200000
+    efficiency = 0.85
+
+    efficiency = capacity_factor * efficiency
+
+    Nyears = n.snapshot_weightings.loc[n.investment_periods[0]].objective.sum() / 8760.0
+
+    capex =   (
+        (calculate_annuity(lifetime,discount_rate) + 
+        fom) 
+        * overnight_cost * Nyears
+    )
+
+    if carrier_name is None:
+        carrier_name = f"{sector}-heat"
+
+    loads = n.loads[(n.loads.carrier == carrier_name)]
+
+    boiler = pd.DataFrame(index=loads.bus)
+    boiler["state"] = boiler.index.map(n.buses.STATE)
+    boiler["bus0"] = boiler.index.map(lambda x: x.split(f" {sector}-heat")[0]).map(
+        n.buses.STATE,
+    )
+    boiler["bus2"] = boiler.bus0 + " ind-co2"
+    boiler["bus0"] = boiler.bus0 + " oil"
+    boiler["bus1"] = boiler.index
+    boiler["carrier"] = f"{sector}-oil-boiler"
+    boiler.index = boiler.index.map(lambda x: x.split("-heat")[0])
+    boiler["efficiency2"] = costs.at["oil", "co2_emissions"]
+
+    if isinstance(marginal_cost, pd.DataFrame):
+        assert "state" in boiler.columns
+        mc = get_link_marginal_costs(n, boiler, marginal_cost)
+    elif isinstance(marginal_cost, (int, float)):
+        mc = marginal_cost
+    else:
+        mc = 0
+
+
+    n.madd(
+        "Link",
+        boiler.index,
+        suffix="-oil-boiler",  # 'ind' included in index already
+        bus0=boiler.bus0,
+        bus1=boiler.bus1,
+        bus2=boiler.bus2,
+        carrier=boiler.carrier,
+        efficiency=efficiency,
+        efficiency2=boiler.efficiency2,
+        capital_cost=capex,
+        p_nom_extendable=True,
+        lifetime=lifetime,
+        marginal_cost=mc,
+    )
+

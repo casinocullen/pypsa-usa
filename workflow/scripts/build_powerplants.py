@@ -711,6 +711,12 @@ def set_parameters(plants: pd.DataFrame):
         plants.pop("ads_startup_cost_fixed$")
         + plants.ads_startfuelmmbtu * plants.fuel_cost
     )
+
+    # Add start up cost for nuclear
+    plants.loc[plants['carrier'] == 'nuclear', 'start_up_cost'] = 20000
+    plants.loc[plants['carrier'] == 'nuclear', 'shut_down_cost'] = 20000
+
+
     plants["min_down_time"] = plants.pop("ads_minimumdowntimehr")
     plants["min_up_time"] = plants.pop("ads_minimumuptimehr")
 
@@ -955,6 +961,5 @@ if __name__ == "__main__":
     print("Tossing out plants without locations:", missing_locations.shape[0])
     # plants[plants.index.isin(missing_locations.index)].to_csv('missing_gps_pudl.csv')
     plants = plants[~plants.index.isin(missing_locations.index)]
-    # print(plants)
 
     plants.to_csv(snakemake.output.powerplants, index=False)

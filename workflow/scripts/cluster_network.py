@@ -618,8 +618,8 @@ if __name__ == "__main__":
             n,
             busmap,
             linemap,
-            linemap,
-            pd.Series(dtype="O"),
+            # linemap,
+            # pd.Series(dtype="O"),
         )
     else:
         Nyears = (
@@ -635,8 +635,9 @@ if __name__ == "__main__":
             custom_busmap = pd.read_csv(
                 snakemake.input.custom_busmap,
                 index_col=0,
-                squeeze=True,
-            )
+                dtype='str',
+                # squeeze=True,
+            ).squeeze("columns")
             custom_busmap.index = custom_busmap.index.astype(str)
             logger.info(f"Imported custom busmap from {snakemake.input.custom_busmap}")
 
@@ -692,5 +693,4 @@ if __name__ == "__main__":
         "linemap",
     ):  # also available: linemap_positive, linemap_negative
         getattr(clustering, attr).to_csv(snakemake.output[attr])
-
     cluster_regions((clustering.busmap,), snakemake.input, snakemake.output)
