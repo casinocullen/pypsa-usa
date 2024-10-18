@@ -92,7 +92,7 @@ class OediDownload:
         return htmls
 
     def _request_data(self, url: str, save: str) -> dict[str, dict | str]:
-
+        print(url)
         response = requests.get(url)
         if response.status_code == 200:
             logger.info(f"Writing {save}")

@@ -961,6 +961,5 @@ if __name__ == "__main__":
     print("Tossing out plants without locations:", missing_locations.shape[0])
     # plants[plants.index.isin(missing_locations.index)].to_csv('missing_gps_pudl.csv')
     plants = plants[~plants.index.isin(missing_locations.index)]
-    # print(plants)
 
     plants.to_csv(snakemake.output.powerplants, index=False)
